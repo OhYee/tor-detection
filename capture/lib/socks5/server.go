@@ -8,12 +8,15 @@ import (
 )
 
 type Socks5Server struct {
-	signal chan bool
+	captureHandle CaptureHandle
+	signal        chan bool
 }
+type CaptureHandle = connection.CaptureHandle
 
-func NewSocks5Server() *Socks5Server {
+func NewSocks5Server(captureHandle CaptureHandle) *Socks5Server {
 	return &Socks5Server{
-		signal: make(chan bool),
+		captureHandle: captureHandle,
+		signal:        make(chan bool),
 	}
 }
 
@@ -36,7 +39,7 @@ func (socks *Socks5Server) Start(ip string, port int) (err error) {
 				continue
 			} else {
 				log.Info.Printf("New connection from %s\n", conn.RemoteAddr().String())
-				go connection.HandleConn(conn)
+				go connection.HandleConn(conn, socks.captureHandle)
 			}
 		}
 

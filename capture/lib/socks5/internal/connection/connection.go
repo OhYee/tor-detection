@@ -13,8 +13,10 @@ import (
 	"github.com/OhYee/goutils/bytes"
 )
 
-func HandleConn(conn net.Conn) {
-	c := NewConnection(conn)
+type CaptureHandle func(id string, src string, dst string) (rw io.ReadWriter, localAddress string, err error)
+
+func HandleConn(conn net.Conn, captureHandle CaptureHandle) {
+	c := NewConnection(conn, captureHandle)
 	err := c.Serve()
 	if err != nil {
 		log.Error.Println(errors.ShowStack(err))
@@ -22,13 +24,14 @@ func HandleConn(conn net.Conn) {
 }
 
 type Connection struct {
-	conn       net.Conn
-	signal     chan bool
-	remoteConn net.Conn
+	conn          net.Conn
+	signal        chan bool
+	remoteConn    io.ReadWriter
+	captureHandle CaptureHandle
 }
 
-func NewConnection(conn net.Conn) *Connection {
-	return &Connection{conn: conn}
+func NewConnection(conn net.Conn, captureHandle CaptureHandle) *Connection {
+	return &Connection{conn: conn, captureHandle: captureHandle}
 }
 
 func (conn *Connection) GetConnection() net.Conn {
@@ -125,15 +128,17 @@ func (conn *Connection) Serve() error {
 		0x08 不支持的目标服务器地址类型
 		0x09 - 0xFF 未分配
 	*/
-	conn.remoteConn, err = net.DialTCP("tcp", nil, &net.TCPAddr{
-		IP:   net.ParseIP(address),
-		Port: int(port),
-	})
+	var localAddress string
+	conn.remoteConn, localAddress, err = conn.captureHandle(fmt.Sprintf("%+v", &conn), conn.conn.RemoteAddr().String(), fmt.Sprintf("%s:%d", address, port))
+	// net.DialTCP("tcp", nil, &net.TCPAddr{
+	// 	IP:   net.ParseIP(address),
+	// 	Port: int(port),
+	// })
 	if err != nil {
 		return errors.NewErr(err)
 	}
 
-	localIP, localPort, err := net.SplitHostPort(conn.remoteConn.LocalAddr().String())
+	localIP, localPort, err := net.SplitHostPort(localAddress)
 	if err != nil {
 		return errors.NewErr(err)
 	}
@@ -203,7 +208,7 @@ func (conn *Connection) handshake() error {
 	return nil
 }
 
-func (conn Connection) redirect(src net.Conn, dst net.Conn, logFormat string) {
+func (conn Connection) redirect(src io.ReadWriter, dst io.ReadWriter, logFormat string) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := src.Read(buf)
@@ -228,7 +233,6 @@ func (conn Connection) redirect(src net.Conn, dst net.Conn, logFormat string) {
 
 		log.Debug.Printf("%+v", time.Now().UnixNano())
 		log.Debug.Printf(logFormat, n, nn)
-		// log.Debug.Printf("%s\n", buf)
 	}
 }
 
