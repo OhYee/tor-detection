@@ -1,5 +1,7 @@
 github.com/OhYee/goutils v1.1.0 h1:E9BMk4oowjbgrYq+30Xq0MwzT2bJ8WC11NVEUom+YFc=
 github.com/OhYee/goutils v1.1.0/go.mod h1:RqaQ1bD+sQAq7zQ/1vAtaojWoFznhAFdWDsMZr7SgkA=
+github.com/OhYee/goutils v1.1.1 h1:bYFaT03KsT6Jry+5bkA9ySZvkvsyqQF8tHRV6l5LOU0=
+github.com/OhYee/goutils v1.1.1/go.mod h1:RqaQ1bD+sQAq7zQ/1vAtaojWoFznhAFdWDsMZr7SgkA=
 github.com/OhYee/rainbow v1.0.4 h1:o9lS1lzB9NEmUj6WIJpFn8MLk8Rey/ux7WkH5tpNZtY=
 github.com/OhYee/rainbow v1.0.4/go.mod h1:9If6oueKS6Tz2i7iBeCBgXJbNOvYIkMMlmxxcmobaPE=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
