@@ -39,10 +39,29 @@ func (conn *Connection) GetConnection() net.Conn {
 }
 
 func (conn *Connection) Serve() error {
-	if err := conn.handshake(); err != nil {
+	c := conn.GetConnection()
+	/*
+		握手部分
+	*/
+	clientHandshake, err := ReadClientHandshake(c)
+	if err != nil {
 		return err
 	}
-	c := conn.GetConnection()
+	if clientHandshake.version != 5 {
+		return errors.New("Can only support Socks5 now")
+	}
+
+	verifyMethod := ChooseVerify(clientHandshake.verifyMethods)
+	serverHandshake := ServerHandshake{
+		version:      clientHandshake.version,
+		verifyMethod: verifyMethod,
+	}
+	c.Write(serverHandshake.ToBytes())
+
+	err = verifyMethod.Verify(c)
+	if err != nil {
+		return err
+	}
 
 	/*
 		Socks5 命令
