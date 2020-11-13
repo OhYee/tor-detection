@@ -67,7 +67,6 @@ func (sniffer *Sniffer) Callback(pkg gopacket.Packet) {
 		if err != nil {
 			log.Error.Println(err)
 		}
-		log.Debug.Println(dst)
 	}
 }
 
