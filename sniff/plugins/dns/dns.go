@@ -14,24 +14,24 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// DNSSniffer DNS 嗅探器
-type DNSSniffer struct {
+// Sniffer DNS 嗅探器
+type Sniffer struct {
 	conn *sql.DB
 }
 
 // GetFilter 获取抓包过滤器
-func (sniffer *DNSSniffer) GetFilter() string {
+func (sniffer *Sniffer) GetFilter() string {
 	return "dst port 53"
 }
 
 // Start 程序开始运行时的任务
-func (sniffer *DNSSniffer) Start() (err error) {
+func (sniffer *Sniffer) Start() (err error) {
 	sniffer.conn, err = sql.Open("mysql", "tor@tcp(127.0.0.1)/tor")
 	return
 }
 
 // End 关闭数据库连接
-func (sniffer *DNSSniffer) End() {
+func (sniffer *Sniffer) End() {
 	if sniffer.conn != nil {
 		if err := sniffer.conn.Close(); err != nil {
 			log.Error.Println(err)
@@ -40,7 +40,7 @@ func (sniffer *DNSSniffer) End() {
 }
 
 // Callback DNS 回调函数
-func (sniffer *DNSSniffer) Callback(pkg gopacket.Packet) {
+func (sniffer *Sniffer) Callback(pkg gopacket.Packet) {
 	if pkg.ApplicationLayer() == nil || pkg.ApplicationLayer().LayerType() != layers.LayerTypeDNS {
 		return
 	}

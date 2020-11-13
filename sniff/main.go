@@ -13,8 +13,8 @@ import (
 )
 
 var sniffs = []types.Sniff{
-	&dns.DNSSniffer{},
-	&http.HTTPSniffer{},
+	&dns.Sniffer{},
+	&http.Sniffer{},
 }
 
 func main() {

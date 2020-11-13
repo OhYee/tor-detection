@@ -17,24 +17,24 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// HTTPSniffer HTTP 嗅探器
-type HTTPSniffer struct {
+// Sniffer HTTP 嗅探器
+type Sniffer struct {
 	conn *sql.DB
 }
 
 // GetFilter 获取抓包过滤器
-func (sniffer *HTTPSniffer) GetFilter() string {
+func (sniffer *Sniffer) GetFilter() string {
 	return "dst port 80"
 }
 
 // Start 程序开始运行时的任务
-func (sniffer *HTTPSniffer) Start() (err error) {
+func (sniffer *Sniffer) Start() (err error) {
 	sniffer.conn, err = sql.Open("mysql", "tor@tcp(127.0.0.1)/tor")
 	return
 }
 
 // End 关闭数据库连接
-func (sniffer *HTTPSniffer) End() {
+func (sniffer *Sniffer) End() {
 	if sniffer.conn != nil {
 		if err := sniffer.conn.Close(); err != nil {
 			log.Error.Println(err)
@@ -43,7 +43,7 @@ func (sniffer *HTTPSniffer) End() {
 }
 
 // Callback HTTP 回调函数
-func (sniffer *HTTPSniffer) Callback(pkg gopacket.Packet) {
+func (sniffer *Sniffer) Callback(pkg gopacket.Packet) {
 	if pkg.TransportLayer() == nil || pkg.TransportLayer().LayerType() != layers.LayerTypeTCP {
 		return
 	}
