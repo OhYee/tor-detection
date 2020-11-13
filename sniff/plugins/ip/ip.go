@@ -62,7 +62,7 @@ func (sniffer *Sniffer) Callback(pkg gopacket.Packet) {
 		ipv6 := pkg.NetworkLayer().(*layers.IPv6)
 		dst = ipv6.DstIP
 	}
-	if dst != nil {
+	if dst != nil && sniffer.checkIP(dst) {
 		_, err := sniffer.conn.Exec("INSERT INTO `ip` (`ip`, `count`) VALUES (?, 1) ON DUPLICATE KEY UPDATE `count` = `count` + 1", dst.String())
 		if err != nil {
 			log.Error.Println(err)
