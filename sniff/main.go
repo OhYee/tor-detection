@@ -6,6 +6,7 @@ import (
 
 	"github.com/OhYee/tor-detection/sniff/plugins/dns"
 	"github.com/OhYee/tor-detection/sniff/plugins/http"
+	"github.com/OhYee/tor-detection/sniff/plugins/ip"
 
 	"github.com/OhYee/tor-detection/sniff/lib/types"
 	"github.com/google/gopacket"
@@ -15,6 +16,7 @@ import (
 var sniffs = []types.Sniff{
 	&dns.Sniffer{},
 	&http.Sniffer{},
+	&ip.Sniffer{},
 }
 
 func main() {
