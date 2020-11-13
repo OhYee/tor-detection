@@ -32,7 +32,10 @@ func main() {
 	defer tcpConn.Close()
 	conn := control.NewConn(textproto.NewConn(tcpConn))
 	defer conn.Close()
-	conn.Authenticate(password)
+	err = conn.Authenticate(password)
+	if err != nil {
+		panic(err)
+	}
 	res, err := conn.GetInfo("ns/all")
 	if err != nil {
 		panic(err)
