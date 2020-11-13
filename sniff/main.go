@@ -1,5 +1,6 @@
 package main
 
+//go:generate go build -o bin/sniff main.go
 import (
 	"fmt"
 	"strings"

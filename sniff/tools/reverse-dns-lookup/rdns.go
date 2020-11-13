@@ -1,5 +1,6 @@
 package main
 
+//go:generate go build -o ../../bin/rdns rdns.go
 import (
 	"database/sql"
 	"net"
