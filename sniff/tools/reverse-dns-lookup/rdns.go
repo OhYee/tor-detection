@@ -40,8 +40,25 @@ func main() {
 	}
 
 	l := len(ips)
+
+	domains := make([]string, len(ips))
+	ok := make(chan bool, 1024)
+	for idx, ip := range ips {
+		go func(domain *string, ip string) {
+			*domain = reverseDNSLookup(ip)
+			ok <- true
+		}(&domains[idx], ip)
+	}
+
+	okCount := 0
+	for okCount < l {
+		<-ok
+		okCount++
+		fmt.Printf("%d/%d\r", okCount+1, l)
+	}
+
 	for idx, ip := range ips {
 		fmt.Printf("%d/%d\r", idx, l)
-		conn.Exec("UPDATE `tor`.`ip` SET `domain`=? where `ip`=?", reverseDNSLookup(ip), ip)
+		conn.Exec("UPDATE `tor`.`ip` SET `domain`=? where `ip`=?", domains[idx], ip)
 	}
 }
