@@ -1,5 +1,7 @@
 package main
 
+//go:generate go build -o ../bin/capture ./cmd/capture/capture.go
+
 import (
 	"flag"
 	"fmt"
@@ -11,8 +13,8 @@ import (
 
 	gnet "github.com/OhYee/goutils/net"
 	"github.com/OhYee/rainbow/errors"
-	"github.com/OhYee/tor-detection/capture/lib/log"
-	"github.com/OhYee/tor-detection/capture/lib/socks5"
+	"github.com/OhYee/rainbow/log"
+	"github.com/OhYee/tor-detection/capture/socks5/server"
 )
 
 var (
@@ -120,7 +122,7 @@ func main() {
 		}
 	}
 
-	socks := socks5.NewSocks5Server(newCapture)
+	socks := server.NewSocks5Server(newCapture)
 	err = socks.Start(ip, port)
 	if err != nil {
 		log.Error.Println(errors.ShowStack(err))
