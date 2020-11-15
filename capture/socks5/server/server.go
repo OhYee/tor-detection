@@ -1,17 +1,15 @@
-package socks5
+package server
 
 import (
 	"net"
 
-	"github.com/OhYee/tor-detection/capture/lib/log"
-	"github.com/OhYee/tor-detection/capture/lib/socks5/internal/connection"
+	"github.com/OhYee/rainbow/log"
 )
 
 type Socks5Server struct {
 	captureHandle CaptureHandle
 	signal        chan bool
 }
-type CaptureHandle = connection.CaptureHandle
 
 func NewSocks5Server(captureHandle CaptureHandle) *Socks5Server {
 	return &Socks5Server{
@@ -39,7 +37,7 @@ func (socks *Socks5Server) Start(ip string, port int) (err error) {
 				continue
 			} else {
 				log.Info.Printf("New connection from %s\n", conn.RemoteAddr().String())
-				go connection.HandleConn(conn, socks.captureHandle)
+				go HandleConn(conn, socks.captureHandle)
 			}
 		}
 
