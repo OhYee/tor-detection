@@ -131,8 +131,15 @@ for circuit in c.get_circuits():
 for cid in circuits:
     c.close_circuit(cid)
 
+# %%
+# 查看 HSDIR
+print(c.get_hidden_service_descriptor(
+    '49015F787433103580E3B66A1707A00E60F2D15B'))
+
 
 # %%
 # 关闭控制连接
 
 c.close()
+
+# %%
