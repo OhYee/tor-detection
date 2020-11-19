@@ -1,19 +1,13 @@
 # %%
-# 包引入
+# 初始化
+
 import requests
 from stem.descriptor import DocumentHandler, parse_file
 from stem.descriptor import parse_file, DocumentHandler
 from stem.control import EventType
 from stem.control import Controller
 
-# %%
-# 连接到 Tor 控制器
-
-c = Controller.from_port(port=9051)
-c.authenticate("my_password")
-
-# %%
-# 初始化 IP 获取
+c = None
 
 
 def getIP(proxy=None):
@@ -26,120 +20,183 @@ def getIP(proxy=None):
         print(data["query"], data["city"])
 
 
-getIP()
-getIP("socks5://127.0.0.1:9050")
-
-# %%
-# 节点信息获取
-
-fields = [
-    "fingerprint", "or_addresses", "identifier_type",
-    "identifier", "digest", "bandwidth",
-    "measured", "is_unmeasured", "unrecognized_bandwidth_entries",
-    "exit_policy", "protocols", "microdescriptor_hashes",
-    "document", "nickname", "published",
-    "address", "or_port", "dir_port",
-    "flags", "version", "version_line",
-]
 relays = {}
 relays_nickname = {}
-for relay in c.get_network_statuses():
-    relay_info = {
-        f: getattr(relay, f)
-        for f in fields
-    }
-    relays_nickname[relay.nickname] = relay_info
-    relays[str(relay.fingerprint)] = relay_info
 
-# %%
-# 中继信息测试
 
-print(relays["0A5476625BAC0573A82FCB432ACED70E1ED83E93"])
-print(relays_nickname["OhYee"])
-print(len(relays))
+def initial_relays():
+    global c, relays, relays_nickname
+    fields = [
+        "fingerprint", "or_addresses", "identifier_type",
+        "identifier", "digest", "bandwidth",
+        "measured", "is_unmeasured", "unrecognized_bandwidth_entries",
+        "exit_policy", "protocols", "microdescriptor_hashes",
+        "document", "nickname", "published",
+        "address", "or_port", "dir_port",
+        "flags", "version", "version_line",
+    ]
+    for relay in c.get_network_statuses():
+        relay_info = {
+            f: getattr(relay, f)
+            for f in fields
+        }
+        relays_nickname[relay.nickname] = relay_info
+        relays[str(relay.fingerprint)] = relay_info
 
-# %%
-# 自主构建电路
 
-circuit_id = c.new_circuit(
-    [
-        # "B7D773E2196DB5B4129D3C050C063DB0F8DF91A5",
-        "0A5476625BAC0573A82FCB432ACED70E1ED83E93",
-        # "8CA736F332937E4FA0F5F48488B823F31883123C",
-    ],
-    await_build=True
-)
-print(circuit_id)
+# 自主链路 id
+my_circuit_id = -1
 
 
 def attach_stream(stream):
-    if stream.status == 'NEW':
-        c.attach_stream(stream.id, circuit_id)
+    '''
+    自主链路绑定
+    '''
+    global c, my_circuit_id
+    print(stream)
+    if stream.status == 'NEW' and my_circuit_id != -1:
+        c.attach_stream(stream.id, my_circuit_id)
 
 
-c.add_event_listener(attach_stream, EventType.STREAM)
-try:
-    c.set_conf('__LeaveStreamsUnattached', '1')
-    getIP("socks5://127.0.0.1:9050")
-finally:
-    c.remove_event_listener(attach_stream)
-    c.reset_conf('__LeaveStreamsUnattached')
+def use_my_circuit(circuit_id):
+    global c, my_circuit_id
+    if my_circuit_id == -1:
+        my_circuit_id = circuit_id
+        c.add_event_listener(attach_stream, EventType.STREAM)
+        c.set_conf('__LeaveStreamsUnattached', '1')
+    else:
+        print("已经设置过自主电路，可能需要重新配置")
 
-# %%
-# 获取共识信息
+
+def close_my_circuit():
+    global c, my_circuit_id
+    if my_circuit_id != -1:
+        c.remove_event_listener(attach_stream)
+        c.reset_conf('__LeaveStreamsUnattached')
+        c.close_circuit(my_circuit_id)
+        my_circuit_id = -1
+
 
 consensus = {}
 consensus_nickname = {}
 
-with open('/home/ohyee/.tor/cached-consensus', 'rb') as consensus_file:
-    routers = parse_file(consensus_file, 'network-status-consensus-3 1.0',
-                         document_handler=DocumentHandler.ENTRIES)
-    for router in routers:
-        consensus_nickname[router.nickname] = router
-        consensus[router.fingerprint] = router
 
+def initial_consensus():
+    global c, consensus, consensus_nickname
+    with open('/home/ohyee/.tor/cached-consensus', 'rb') as consensus_file:
+        routers = parse_file(consensus_file, 'network-status-consensus-3 1.0',
+                             document_handler=DocumentHandler.ENTRIES)
+        for router in routers:
+            consensus_nickname[router.nickname] = router
+            consensus[router.fingerprint] = router
+
+
+def get_all_circuits():
+    '''
+    获取所有电路
+    '''
+    global c
+    circuits = []
+    for circuit in c.get_circuits():
+        circuits.append(circuit)
+        print(circuit.id, circuit.purpose, circuit.status, circuit.build_flags)
+        for relay in circuit.path:
+            print(" ", relay)
+    return circuits
+
+
+def show_circuits():
+    '''
+    查看所有电路
+    '''
+    circuits = get_all_circuits()
+    for circuit in circuits:
+        print(circuit.id, circuit.purpose, circuit.status, circuit.build_flags)
+        for relay in circuit.path:
+            print(" ", relay)
+
+
+def close_circuits():
+    '''
+    删除所有电路
+    '''
+    circuits = get_all_circuits()
+    for circuit in circuits:
+        c.close_circuit(circuit.id)
+
+
+def new_circuit(path=[
+    # "B7D773E2196DB5B4129D3C050C063DB0F8DF91A5",
+    "0A5476625BAC0573A82FCB432ACED70E1ED83E93",
+    "8CA736F332937E4FA0F5F48488B823F31883123C",
+]):
+    '''
+    建立自主电路
+    '''
+    global c
+    circuit_id = c.new_circuit(
+        path=path,
+        await_build=True
+    )
+    return circuit_id
+
+
+def initial():
+    '''
+    初始化数据
+    '''
+    global c
+    if c != None:
+        close()
+    c = Controller.from_port(port=9051)
+    c.authenticate("my_password")
+
+    initial_consensus()
+    initial_relays()
+
+    getIP()
+    getIP("socks5://127.0.0.1:9050")
+
+
+def close():
+    global c
+
+    c.close()
+
+
+initial()
 
 # %%
-print(len(consensus))
+# 结束
+close()
 
-
-# %%
-# 对比共识和节点内容
-
-cnt = 0
-for relay in relays.values():
-    temp = consensus_nickname.get(relay["nickname"], None)
-    if temp == None:
-        cnt += 1
-        print(relay["nickname"], relay["fingerprint"])
-print(cnt)
+#######################################
 
 # %%
-# 查看当前建立的电路列表
-
-circuits = []
-for circuit in c.get_circuits():
-    circuits.append(circuit.id)
-    print(circuit.id)
-    for relay in circuit.path:
-        print(" ", relay)
-
+# 获取所有电路
+show_circuits()
 
 # %%
 # 关闭所有电路
-
-for cid in circuits:
-    c.close_circuit(cid)
+close_circuits()
 
 # %%
-# 查看 HSDIR
-print(c.get_hidden_service_descriptor(
-    '49015F787433103580E3B66A1707A00E60F2D15B'))
+# 使用自主链路
+use_my_circuit(new_circuit(
+    path=[
+        # "B7D773E2196DB5B4129D3C050C063DB0F8DF91A5",
+        "0A5476625BAC0573A82FCB432ACED70E1ED83E93",
+        "8CA736F332937E4FA0F5F48488B823F31883123C",
+    ]
+))
 
 
 # %%
-# 关闭控制连接
+# 获取 IP
+getIP("socks5://127.0.0.1:9050")
 
-c.close()
+# %%
+# 不使用自主链路
+close_my_circuit()
 
 # %%
