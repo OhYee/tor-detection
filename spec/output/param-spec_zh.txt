@@ -1,0 +1,226 @@
+
+
+                           Tor网络参数
+
+该文件列出了可以出现在目录一致性的“params”行上的可识别参数。
+
+1. 网络协议参数
+ “circwindow”——电路建立时使用的默认包窗口。它一开始是1000个细胞，但是一些研究表明，一个较低的值意味着在任何给定时间在网络中传输的细胞更少。
+    最低:100，最大:1000
+    第一次出现:Tor 0.2.1.20
+ “refuseunknownexits”——如果设置为1，退出继电器会查看请求打开退出流的前一跳电路，如果它们不认识到它是一个继电器，就拒绝退出。这样做的目的是让人们更难将它们用作单跳代理。详情请参阅trac条目1751。
+    最小值:0，最大值:1
+    第一次出现:0.2.2.17-alpha
+ “UseOptimisticData”——如果设置为零，客户端默认不应该尝试发送乐观数据到服务器，直到他们收到
+    RELAY_CONNECTED细胞。
+    最小值:0，最大值:1，默认值:1
+    第一次出现:0.2.3.3-alpha
+    之前默认为0:0.2.9.1-alpha
+    在0.4.5.1-alpha删除;现在一直在。
+ “usecreatefast”——用于控制客户端是否在其电路的第一跳上使用CREATE_FAST握手。
+    最小值:0，最大值:1。默认值:1。
+    第一次出现:0.2.4.23 0.2.5.2-alpha
+    在0.4.5.1-alpha删除;现在总是。
+ “min_paths_for_circs_pct”——一个百分比阈值，它决定客户端是否认为他们有足够的目录信息来构建电路。该值适用于客户端可以构建的带宽加权路径的总比例;更多信息请参见path-spec.txt。
+    Min: 25, Max: 95，默认值:60
+    第一次出现:0.2.4
+ “AllowNonearlyExtend”——如果为真，允许扩展不在内部的单元格
+    RELAY_EARLY细胞。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.2.3.11-alpha
+ "ExtendByEd25519ID"——如果为真，客户端在生成EXTEND2单元时应该为继电器包括Ed25519标识。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.3.0
+
+
+2. 性能调优参数
+ “电路优先级减半秒”——在加权哪个电路将发送下一个单元时使用的半衰期参数。遵守通过Tor
+    0.2.2.10-alpha后来。Tor的版本介于0.2.2.7-alpha和
+    0.2.2.10-alpha识别了一个“CircPriorityHalflifeMsec”参数，但处理不当。)
+    Min: -1, Max: 2147483647 (INT32_MAX)
+    第一次出现:Tor 0.2.2.11-alpha
+ “perconnbwrate”和“perconnbwburst”——如果设置，每个中继为每个客户端或连接设置一个单独的令牌桶，并且速率单独限制该连接。通常未设置，除了在trac条目1750附近进行性能实验时。只有继电器运行Tor 0.2.2.16-alpha和以后的继电器才能实现。(注意继电器运行
+    0.2.2.7-alpha到0.2.2.14-alpha寻找bwconnrate和bwconnburst，但随后对它们做了错误的事情;详见bug 1830。)
+    Min: 1, Max: 2147483647 (INT32_MAX)
+    第一次出现:0.2.2.7-alpha
+    中:0.2.2.16-alpha
+ “NumNTorsPerTAP”——在继电器上平衡ntor和TAP细胞时，每个TAP握手我们应该执行多少次ntor握手?
+    分钟:1。马克斯:100000。默认值:10。
+    第一次出现:0.2.4.17-rc
+ "circ_max_cell_queue_size"——该参数确定每个电路队列允许的最大单元格数。
+    1000分钟。Max 4294967295。默认的50000。
+    第一次出现:0.3.3.6-rc。
+ “sendme_emit_min_version”——可以发送的最小SENDME版本。
+    分钟:0。马克斯:255。默认为0。
+    第一次出现:0.4.1.1-alpha。
+ “sendme_accept_min_version”——被接受的最小SENDME版本。
+    分钟:0。马克斯:255。默认为0。
+    第一次出现:0.4.1.1-alpha。
+ “KISTSchedRunInterval”——“KIST”调度器运行的频率，以决定哪些数据写入网络?以毫秒为单位的值。如果为0，则应该禁用KIST调度器。
+    分钟:0。马克斯:100。默认值:10。
+    第一次出现:0.3.2
+
+3.Voting-related参数
+ “bwweightscale”——带宽权重除以的值。如果不存在，则默认为10000。
+    最小值:1
+    第一次出现:0.2.2.10-alpha
+ “maxunmeasuredbw”——由权威机构在使用方法17或更迟的方法进行投票时使用。对于不基于至少三种测量值的路由器，给出任何带宽=入口的最大值。
+    第一次出现:0.2.4.11-alpha
+ “FastFlagMinThreshold”、“FastFlagMaxThreshold”——对于应该获得Fast标志的路由器，断开允许的最低值和最高值。这是在投票期间使用，以防止获得快速标志的阈值太低或太高。
+    FastFlagMinThreshold:分钟:4。Max: INT32_MAX:默认:4。
+    FastFlagMaxThreshold:分钟:-。默认:INT32_MAX
+    第一次出现:0.2.3.11-alpha
+ “AuthDirNumSRVAgreements”——在共识中写入一个新的共享随机值所需的同意目录权威投票的最小数量(此规则仅适用于共享随机协议的第一轮提交)。
+    分钟:1。马克斯:INT32_MAX。默认:2/3的总污垢。
+
+4. Circuit-build-timeout参数
+ “cbtdisabled”、“cbtnummodes”、“cbtrecentcount”、“cbtmaxtimeouts”、“cbtmincircs”、“cbtquantile”、“cbtclosequantile”、“cbttestfreq”、“cbtmintimeout”、“cbtlearntimeout”、“cbtmaxopencircs”和“cbtinitialtimeout”——请参见“2.4.5”。在path-spec.txt中为一系列与电路构建时间相关的一致性参数。
+
+
+5. 这些参数
+ “最大一致性到不同缓存”——决定继电器应该缓存多少一致性历史(以小时为单位)，以满足不同。(最小0，最大8192，默认72)
+ “try-diff-for consensus-newer-than”——这个参数决定了在客户不再尝试寻找意见分歧之前，意见一致的时间可以是多久(以小时为单位)。(最小0，最大8192，默认72)
+
+6. Pathbias参数
+ “pb_mincircs”、“pb_注意epct”、“pb_warnpct”、“pb_extremepct”、“pb_dropguards”、“pb_scalecircs”、“pb_scalefactor”、“pb_multfactor”、“pb_minuse”、“pb_注意usepct”、“pb_extremeusepct”、“pb_scaleuse”——DOCDOC
+
+7. 继电器的行为
+ “洋葱键旋转天”——(最小1，最大90，默认28)
+ “oni -key-grace-period-days”——(最小值1，最多oni -key-rotation-days，默认值7)
+
+    每个继电器应该列出它为洋葱键旋转天数生成的每个洋葱键，然后替换它。继电器应该继续接受他们的最新的洋葱密钥为额外的洋葱密钥grace-period天后，它被替换。(引入0.3.1.1-alpha;以前版本的tor将这两个值硬编码为7天。
+
+8. V3洋葱服务参数
+ “hs_intro_min_introduce2”、“hs_intro_max_introduce2”—
+    每个电路在旋转前允许引入的最小/最大单元数(在这两个值之间随机选取的实际数量)。
+ “hs_intro_min_lifetime”、“hs_intro_max_lifetime”——服务应该保持介绍点的最小/最大生命周期(以秒为单位)(实际生命周期在这两个值之间随机选择)。
+ “hs_intro_num_extra”——服务允许打开的额外介绍点的数量。这个概念来自于第155号提案。
+ “hsdir_interval”——时间段的长度。参见rend-spec-v3.txt部分[时间段]。
+ “hsdir_n_replicas”——HS描述符副本的数量。
+ “hsdir_spread_fetch”——一个tor客户端在尝试获取一个描述符时应该选择的每个副本的HSDirs总数。
+ “hsdir_spread_store”——服务将上传其描述符到的每个副本的HSDirs总数。
+ “HSV3MaxDescriptorSize”——最大描述符大小(字节)。
+ “hs_service_max_rdv_failures”——此参数确定每次引入HS服务可以进行的最大交会尝试次数。
+    最小值1。马克斯10。默认2。
+    第一次出现:0.3.3.0-alpha。
+ “HiddenServiceEnableIntroDoSDefense”——如果引入点支持该参数，该参数将使tor开始使用该防御(对于protover HSIntro=5)。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.4.2.1-alpha。
+ “HiddenServiceEnableIntroDoSBurstPerSec”——用于引入点速率限制的令牌桶的最大burst。
+    分钟:0。马克斯:INT32_MAX。默认值:200
+    第一次出现:0.4.2.1-alpha。
+ “HiddenServiceEnableIntroDoSRatePerSec”——为引入点速率限制令牌桶使用的填充速率。
+    分钟:0。马克斯:INT32_MAX。默认值:25
+    第一次出现:0.4.2.1-alpha。
+
+9. 拒绝服务参数
+
+    拒绝服务缓解参数。介绍了0.3.3.2-alpha:
+ “DoSCircuitCreationEnabled”——启用电路创建DoS缓解。
+ “DoSCircuitCreationMinConnections”——在一个客户地址被标记为执行一个电路创建DoS之前的并发连接的最小阈值
+ “DoSCircuitCreationRate”——一旦达到最小并发连接阈值，允许每个客户端IP地址每秒的电路创建速率。
+ “DoSCircuitCreationBurst”——达到最小并发连接阈值后，每个客户端IP地址允许的电路创建突发。
+ “DoSCircuitCreationDefenseType”——用于缓解电路创建的检测到的客户地址的防御类型。
+        1:没有防御。
+        2:拒绝电路创建为“DoSCircuitCreationDefenseTimePeriod”的长度。
+
+ “DoSCircuitCreationDefenseTimePeriod”——DoS防御被激活的基本时间周期。
+ “DoSConnectionEnabled”——启用连接DoS缓解。
+ “DoSConnectionMaxConcurrentCount”——来自客户端IP地址的并发连接的最大阈值。
+ “DoSConnectionDefenseType”——应用于检测到的用于连接缓解的客户端地址的防御类型。可能的值是:
+        1:没有防御。
+        2:立即关闭新连接。
+ “DoSRefuseSingleHopClientRendezvous”——拒绝为单跳客户建立会合点。
+
+10. Padding-related参数
+ “circpad_max_circ_queued_cells”——电路填充模块将停止发送更多的填充单元格，如果在一个给定的电路队列中有超过这个数量的单元格。
+    分钟:0。马克斯:50000。默认的1000。
+    第一次出现:0.4.0.3-alpha。
+ “circpad_global_allowed_cells”——DOCDOC
+ “circpad_global_max_padding_pct”——DOCDOC
+ “circpad_padding_disabled”——DOCDOC
+ “circpad_padding_reduced”——DOCDOC
+ “nf_conntimeout_clients”——DOCDOC
+ “nf_conntimeout_relays”——DOCDOC
+ “nf_ito_high_reduced”——DOCDOC
+ “nf_ito_low”——DOCDOC
+ “nf_ito_low_reduced”——DOCDOC
+ “nf_pad_before_usage”——DOCDOC
+ “nf_pad_relays”——DOCDOC
+ “nf_pad_single_onion”——DOCDOC
+
+11. Guard-related参数
+ (有关这里使用的词汇的更多信息，请参阅guard-spec.txt。)
+ “UseGuardFraction”(使用GuardFraction)——如果这是真的，客户就会根据共识中的“GuardFraction”信息来决定如何选择护胸产品。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.2.6虽然只是
+ “防护寿命”——控制防护寿命。如果未经确认的防护罩在许多天前取样超过这个量，就应该从防护罩样本中移除。
+    分钟:1。马克斯:3650。默认值:120。
+    第一次出现:0.3.0
+ “监护确认的最小寿命”——控制已确认的监护寿命:如果一个监护在许多天前被确认超过这个寿命，就应该从监护样本中移除。
+    分钟:1。马克斯:3650。默认值:60。
+    第一次出现:0.3.0
+ “监视互联网可能下降的时间间隔”——如果Tor无法在很长时间内(以秒为单位)构建电路，则假定互联网连接中断，并将监视故障视为未经证实。
+    分钟:1。马克斯:INT32_MAX。默认值:600。
+    第一次出现:0.3.0
+ “警卫-最大样本尺寸”——客户在样本中应该收集的最大数量的警卫。
+    分钟:1。马克斯:INT32_MAX。默认值:60。
+    第一次出现:0.3.0
+ “警卫最大采样阈值百分比”——客户应该尝试在样本中收集的警卫的最大带宽加权比例。
+    分钟:1。马克斯:100。默认值:20。
+    第一次出现:0.3.0
+ “监护-意义-限制-百分比”——如果客户端配置了tor以排除如此多的保护，以致可用的保护带宽小于总数的这个百分比，那么将保护样本视为“受限制的”，并将其保存在一个单独的样本中。
+    分钟:1。马克斯:100。默认值:20。
+    第一次出现:0.3.0
+ “保护-极端-限制-百分比”——警告用户，如果他们配置了tor排除了如此多的保护，可用的保护带宽小于总数的这个百分比。
+    分钟:1。马克斯:INT32_MAX。默认值:1。
+    第一次出现:0.3.0
+ “guard-min-filtered-sample-size”——在过滤掉不可用的guard后，如果样本中可用的guard少于这个数量，客户端应该尝试在样本中添加更多的guard(如果允许)。
+    分钟:1。马克斯:INT32_MAX。默认值:20。
+    第一次出现:0.3.0
+ “guard-n-primary-guard”——已确认的、客户应视为“primary guard”的警卫数量。
+    分钟:1。马克斯:INT32_MAX。默认值:3。
+    第一次出现:0.3.0
+ “guard-n-primary-guards-to-use”、“guard-n-primary-dir-guards-to-use”
+    ——主保护程序和主目录保护程序的数量，客户端应该愿意并行使用。其他的主警卫不会被使用，除非早期的被拆除。“guard-n-primary-guards-to-use”:
+       最小值1，最大INT32_MAX:默认值:1。“guard-n-primary-dir-guards-to-use”
+       最小值1，最大INT32_MAX:默认值:3。
+    第一次出现:0.3.0
+ “guard-nonprimary-guard-connect-timeout”——在尝试确认非主守卫时，如果守卫的响应时间没有超过这一秒，则将低优先级的守卫视为可用。
+    分钟:1。马克斯:INT32_MAX。默认值:15
+    第一次出现:0.3.0
+ “守卫-非主要守卫-闲置-超时”——当试图确认非主要守卫时，如果守卫没有回答超过这个时间(以秒为单位)，就将其视为down。
+    分钟:1。马克斯:INT32_MAX。默认值:600
+    第一次出现:0.3.0
+ “监护解除-未登记的监护解除日”——如果一个监护已在共识中被排除至少这么多天，则将其从样本中移除。
+    分钟:1。马克斯:3650。默认值:20。
+    第一次出现:0.3.0
+
+12. 继电器的行为
+ “假定可达”——如果为真，即使不能连接到IPv4端口，继电器也应该发布描述符。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.4.5.1-alpha。
+ “assueme -reachable- IPv6”——如果是真的，即使不能连接到IPv6，继电器也应该发布描述符
+    ORPort。
+    分钟:0。马克斯:1。默认值:0。
+    第一次出现:0.4.5.1-alpha。
+
+x过时的参数
+ “NumDirectoryGuards”、“NumEntryGuards”——客户端默认应该使用的保护节点数量。如果numdirectoryguard为0，则默认为numentryguard。
+    NumDirectoryGuards:最小值:0。马克斯:10。默认值:0
+    NumEntryGuards:分钟:1。马克斯:10。默认值:3
+    第一次出现:0.2.4.23 0.2.5.6-alpha
+    删除:0.3.0
+ “GuardLifetime”——客户机应该选择保护节点的持续时间，单位为秒。
+    分钟:30天。马克斯:1826天。默认值:60天。
+    第一次出现:0.2.4.12-alpha
+    删除:0.3.0。
+ “UseNTorHandshake”——如果为真，则支持Tor的版本
+    NTor在默认情况下更喜欢使用它。
+    最小值:0，最大值:1。默认值:1。
+    第一次出现:0.2.4.8-alpha
+    删除:0.2.9。
+ “Support022HiddenServices”——用于实现默认情况下从发送时间戳到不发送时间戳的大规模切换。如果此选项不存在，或设置为1，则使用默认配置的客户端发送时间戳;否则，它们不会。
+    最小值:0，最大值:1。默认值:1。
+    第一次出现:0.2.4.18-rc
+    删除:0.2.6虽然只是

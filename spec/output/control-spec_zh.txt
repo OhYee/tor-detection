@@ -1,0 +1,2420 @@
+
+
+                   TC:一个Tor控制协议(版本1)
+
+0. 范围
+
+  这个文档描述了一个特定于实现的协议，用于其他程序(例如前端用户界面)与本地运行的Tor进程通信。它不是洋葱路由协议的一部分。
+
+  这个协议取代了TC的0版本，它现在是不赞成的。TC在“control-spec-v0.txt”中有描述，以供参考。建议实现者避免直接使用TC，而是使用可以轻松更新以使用较新的协议的库。(Tor版本0.1.0.x使用的是版本0;本文档中的协议仅适用于0.1.1中的Tor版本。x级数等)
+
+      “必须”、“不得”、“必须”、“应当”、“应当”等关键词
+      本文档中的“不”、“应该”、“不应该”、“推荐”、“可能”和“可选”将按照中描述的方式解释
+      RFC 2119。
+
+1. 协议概述
+
+  TC是一个双向的基于消息的协议。它假定一个底层流用于控制进程(“客户端”或“控制器”)和Tor进程(或“服务器”)之间的通信。流可以通过TCP、TLS-over-TCP、unix域套接字等实现，但是它必须提供可靠的按顺序传递。为了安全起见，不受信任的方不应该访问流。
+
+  在TC中，客户端和服务器通过底层流互相发送有类型的消息。客户端发送“命令”，服务器发送“回复”。
+
+  默认情况下，来自服务器的所有消息都将响应来自客户机的消息。然而，一些客户端请求将导致服务器无限期地向客户端发送消息。这样的“异步”响应被标记为这样。
+
+  服务器在接收到的消息中响应消息。
+
+1.1。向前兼容性
+
+  这是一个不断发展的协议;新的客户端和服务器行为将被允许在未来的版本。为了允许代表客户机的新的向后兼容行为，我们可以添加新的命令，并允许现有的命令在将来的版本中接受新的参数。为了允许新的向后兼容的服务器行为，我们注意到在下面的不同位置，说该协议的未来版本的服务器可能会插入新的数据，并且注意到客户端应该/必须在这些位置“容忍”意外的元素。我们有两种方法来做到这一点:
+
+  *在邮件中添加新字段:
+
+    例如，我们可以说“这个消息有三个空格分隔的字段;客户必须容忍更多字段。”这意味着客户端不能崩溃或否则无法解析消息或其他后续消息当有超过三个字段,以及它至少应该函数时提供更多字段,它只让它接受的字段。最明显的方法是忽略附加字段;第二种最明显的方法是向用户逐字报告其他字段，可以作为专家UI的一部分。
+
+  *在备选方案列表中添加新的可能值:
+
+    例如，我们可能会说“这个字段将是开放的，关闭的，或者。
+    连接。客户必须容忍意料之外的价值。”这意味着当出现意外值时，客户机不能崩溃或无法解析消息或其他后续消息，并且应该尽力处理消息的其余部分。最明显的方法是假装每个替代列表都有一个额外的“未识别的值”元素，并将任何未识别的值映射到该元素;第二种最明显的方法是为每个无法识别的值创建一个单独的“无法识别的值”元素。
+
+    客户端不应该“容忍”未被识别的替代，假装包含它们的消息不存在。例如，由于无法识别的原因而关闭的流仍然是关闭的，并且应该这样报告。
+ (如果给出了一些备选方案，并且没有明确说明客户机必须容忍意外值，那么客户机仍然必须容忍意外值。唯一的例外是，如果有一个明确的声明，即永远不会添加未来的值。)
+
+2. 消息格式
+
+2.1。描述格式
+
+  下面列出的消息格式使用RFC 2234中描述的ABNF。
+  协议本身松散地基于SMTP(参见RFC 2821)。
+
+  我们使用RFC 2822中的以下非终端:atom、qcontent
+
+  我们定义了以下通用的非终端:
+
+     引用字符串= DQUOTE *qcontent
+
+  在直线长度上没有明确的限制。除非明确禁止，否则所有8位字符都是允许的。在引号字符串中，反斜杠和引号必须转义;其他字符不需要转义。
+
+  无论何时CRLF被指定从控制器接受，Tor也可以接受LF。然而，Tor不能生成LF而生成CRLF。
+  控制器应该始终发送CRLF。
+
+2.1.1。关于一个逃跑的bug的注释
+
+     CString = DQUOTE *qcontent
+
+  请注意，尽管这些非终端具有相同的语法，但它们的解释是不同的。在QuotedString中，后跟任何字符的反斜杠表示该字符。但在CString中，转义为"\n" "\t" "\r"八进制转义为"\0"…"\377"表示换行、制表符、回车和
+  256个可能的八位值。
+
+  CString在本文档中的使用反映了Tor中的一个bug;它们应该改为QuotedString。将来，它们可能会迁移到使用QuotedString。如果他们这样做了，那么
+  QuotedString实现不会在“n”、“t”、“r”或数字前放置反斜杠，以确保旧的控制器不会混淆。
+
+  对于未来验证，控制器实现者可以使用以下规则来与有bug的Tor实现和未来实现规范的规则兼容:
+
+    读出\n \t \r和\0…\377, C脱逃。
+    将后跟任何其他字符的反斜杠视为该字符。
+
+  目前，Tor输出下面的许多QuotedString实例实际上是cstring。我们打算在Tor的未来版本中修复这个问题，并记录哪些版本被破坏了。(更多信息请参见bugtracker票据#14555。)
+
+  注意，这个错误只存在于由Tor为
+  Tor控制器;Tor应该正确地解析来自控制器的输入quotedstring。
+
+
+2.2。从控制器到Tor的命令
+
+    命令=关键字OptArguments CRLF / "+"关键字OptArguments CmdData
+    关键词= 1 *α
+    OptArguments = [SP *(SP / VCHAR)]
+
+  命令可以是包含关键字和参数的单行命令，也可以是包含初始关键字以+开头、数据部分以单独的“。”结尾的多行命令。(我们使用一个特殊的字符来区分多行命令，这样Tor就可以正确地解析它不能识别的多行命令。)具体的命令及其参数将在下面的第3节中进行描述。
+
+2.3。从Tor回复控制器
+
+    Reply = SyncReply / AsyncReply
+    (MidReplyLine / DataReplyLine
+    (MidReplyLine / DataReplyLine
+
+    MidReplyLine = StatusCode "-" ReplyLine
+    DataReplyLine = StatusCode "+" ReplyLine CmdData
+    回复行= StatusCode SP
+    [ReplyLine] CRLF
+    ReplyText = XXXX
+    StatusCode = 3位数
+
+  除非另外指定，否则多行回复从一个单一的
+  Tor保证控制器共享相同的状态码。具体答复见下文第3节，并在第4节中作更充分的说明。
+ [兼容性注意:在0.2.0.3-alpha之前版本的Tor有时会生成“*(MidReplyLine / DataReplyLine)”形式的异步。
+  这是不正确的，但是需要使用这些版本的Tor的控制器应该准备好获得多行异步，最后一行(通常是“650 OK”)省略了。
+
+2.4。通常令牌
+ ;CRLF的意思是:“ASCII回车字符(十进制值13);后跟ASCII换行字符(十进制值10)。”
+  CRLF =
+ ;控制器如何告诉Tor关于特定的或。有四个;可能的格式:;$Fingerprint——其身份密钥与指纹散列的路由器。;这是引用OR的首选方式。;$Fingerprint~昵称——其身份密钥散列到的路由器;给定指纹，但前提是路由器有给定的昵称。;$Fingerprint=昵称——其身份密钥散列到的路由器;给定的指纹，但前提是路由器有名字并且有给定的指纹;昵称。;昵称——具有给定昵称的已命名路由器，或者(如果没有);路由器存在，任何昵称与给定的路由器匹配的路由器。;这不是一个安全的方式引用路由器，因为命名状态;在某些情况下可能会随着时间而改变。;;执行上述操作的令牌如下:
+
+  LongName /昵称
+  LongName =指纹["~"昵称]
+ ;对于大于0.3.1.3-alpha的函数，LongName可能包含了一个等号;用符号("=")代替波浪号("~")。等号的出现;表示OR拥有“已命名”的旗帜:
+
+  LongName =指纹[("=" / "~")昵称]
+
+  指纹= $ 40*HEXDIG
+  NicknameChar = "a"-"z" / "a"-"z" / "0" -" 9"
+  昵称= 1*19 NicknameChar
+ ;下面的是一种过时的说法。;VERBOSE_NAMES将事件中的ServerID替换为LongName;GETINFO结果。可以在Tor版本中启用VERBOSE_NAMES;在0.2.2.1-alpha和以后的版本中，它总是打开的。
+  ServerID =昵称/指纹
+
+ ;流或电路的唯一标识符。目前，只有Tor;使用数字，但这可能会改变
+  StreamID = 1*16 IDChar
+  电路= 1*16 IDChar
+  ConnID = 1*16 IDChar
+  QueueID = 1*16 IDChar
+  IDChar = ALPHA / DIGIT
+
+  地址= ip4-地址/ ip6-地址/主机名(XXXX定义这些)
+ ;一个“CmdData”部分是一个以终止符结束的八字节序列;序列CRLF。”CRLF。终止序列可能不会出现在;数据的主体。用数据行中的前导周期进行转义;如RFC 2821第4.5.2节中规定的额外前置期。
+  " *DataLine "。CRLF
+  DataLine = CRLF / "。1*LineItem CRLF / NonDotItem *LineItem CRLF
+  LineItem = NonCR / 1*CR NonCRLF
+  NonDotItem = NonDotCR / 1*CR NonCRLF
+ ;ISOTime, ISOTime2和ISOTime2Frac是时间格式，具体如下:ISO8601。;例如ISOTime:“2012-01-11 12:15:33”;例ISOTime2: "2012-01-11T12:15:33";示例ISOTime2Frac:“2012 - 01 - 11 t12:15:33.51”
+  IsoDatePart = 4*DIGIT "-" 2*DIGIT "-" 2*DIGIT
+  IsoTimePart = 2*DIGIT ":" 2*DIGIT ":" 2*DIGIT
+  这句话的意思是"等时部分"
+  等时部分(T)
+  ISOTime2Frac = IsoTime2 ["]1 *数字)
+ ;数字
+  领先位= "1" - "9"
+  UInt =前导位*前位
+
+3.命令
+
+  所有命令都不区分大小写，但大多数关键字是区分大小写的。
+
+3.1。SETCONF
+
+  更改一个或多个配置变量的值。的语法是:
+ 1*(SP关键字["=" value]) CRLF value = String / QuotedString
+
+  Tor的行为就好像它刚刚从配置文件中读取了每个键-值对。没有相应值的关键字将其配置值重置为0或NULL(如果希望将其重置为默认值，请使用RESETCONF)。SETCONF是全有或全无的:如果任何配置设置出现错误，Tor都不设置。
+
+  Tor在成功时回复“250 OK”。
+  如果某些列出的关键字无法找到，Tor会回复一条“552不可识别选项”的消息。否则，Tor会对语法错误响应“513语法错误配置值”，或者对语义错误响应“553不可能配置设置”。
+
+  一些配置选项(例如:“桥”)取多个值。此外，一些配置密钥(例如用于隐藏服务和用于入口保护列表的密钥)形成了一个上下文敏感组，其中顺序很重要(参见
+  GETCONF下文)。在这些情况下，设置a中的选项_any_
+  使用SETCONF命令重置所有其他命令。例如，如果配置了两个ORListenAddress值，并且到达一个包含单个ORListenAddress值的SETCONF命令，则新命令的值将替换两个旧值。
+
+  有时不可能改变配置选项仅仅通过发行一系列SETCONF命令,因为的价值的一个配置选项的值取决于另一个尚未确定。这种情况下是可以克服通过设置多个配置选项和一个SETCONF命令(例如SETCONF ORPort = 443
+  ORListenAddress = 9001)。
+
+3.2。RESETCONF
+
+  完全删除给定配置选项的所有设置，分配其默认值(如果有的话)，然后分配提供的字符串。
+  通常将字符串保留为空，以便简单地将选项设置回默认值。的语法是:
+ 1*(SP关键字["="字符串])CRLF
+
+  否则，它的行为与上面的SETCONF类似。
+
+3.3。GETCONF
+
+  请求零个或多个配置变量的值。
+  的语法是:
+ GETCONF" *(SP关键字)CRLF
+
+  如果所有列出的关键字都存在于Tor配置中，Tor会用表单中的一系列回复行进行回复:
+
+      250字=值
+
+  如果任何选项被设置为“默认”值，在语义上与空字符串不同，Tor可能会回复如下形式的回复行:
+
+      250字
+
+  值可以是原始值或带引号的字符串。Tor将尝试使用无引号的值，除非该值可能因为没有被引用而被误解。(现在，Tor不支持配置选项的这种可误读值。)
+
+  如果一些列出的关键字不能被找到，Tor会回复一个“552未知配置关键字”的消息。
+
+  如果某个选项在配置中出现多次，则按顺序返回其所有键-值对。
+
+  如果没有提供关键字，Tor将响应“250 OK”消息。
+
+  有些选项是上下文敏感的，并且依赖于具有不同关键字的其他选项。这些不能直接获取。目前只有一个这样的选项:客户机应该使用“HiddenServiceOptions”虚拟关键字来获取所有HiddenServiceDir、HiddenServicePort、
+  HiddenServiceVersion和HiddenserviceAuthorizeClient选项设置。
+
+3.4。setevent
+
+  请求服务器将感兴趣的事件通知客户端。的语法是:
+ "SETEVENTS" [SP "EXTENDED"] *(SP EventCode) CRLF
+
+     EventCode = 1*(ALPHA / "_")(见4.1节。x表示事件类型)
+
+  SETEVENTS行中未列出的任何事件都被关闭;因此,发送
+  带有空主体的SETEVENTS关闭所有事件报告。
+
+  如果成功，服务器将以“250 OK”和“552”响应
+  无法识别的事件"，如果其中一个事件代码无法识别，则应答。(发生错误时，活动事件代码列表不会改变。)
+
+  如果提供了标志字符串“EXTENDED”，Tor可能会为这个连接提供额外的事件信息;更多信息见4.1。
+  注意:给定连接上的所有事件将以扩展格式提供，或者不提供。
+  注意:“EXTENDED”最初是在Tor 0.1.1.9-alpha中得到支持的;在Tor 0.2.2.1-alpha及以后的版本中，它总是打开的。
+
+  每个事件在4.1节中有更详细的描述。
+
+3.5。进行身份验证
+
+  从客户端发送到服务器。的语法是:
+ "AUTHENTICATE" [sp1 *HEXDIG / QuotedString] CRLF
+
+  此命令用于对服务器进行身份验证。所提供的字符串是下列字符串之一:
+
+     *(适用于HASHEDPASSWORD认证方法;见3.21)
+       表示为QuotedString的原始密码。
+
+     *(对于COOKIE是身份验证方法;见3.21)
+       用十六进制格式化的cookie文件的内容
+
+     *(适用于SAFECOOKIE认证方法;见3.21)
+       基于AUTHCHALLENGE消息的HMAC，采用十六进制。
+
+  如果验证cookie不正确，服务器将响应“250 OK”或“515 Bad authentication”。当身份验证失败时，Tor会关闭连接。
+
+  身份验证令牌可以指定为带引号的ASCII字符串，也可以指定为同一字符串的无引号的十六进制编码(以避免转义问题)。
+
+  有关如何在磁盘上安全地存储身份验证信息的信息，请参阅5.1节。
+
+  在客户端进行身份验证之前，除了
+  PROTOCOLINFO、AUTHCHALLENGE、AUTHENTICATE或QUIT有效。如果控制器发送任何其他命令，或发送格式错误的命令，或发送不成功的身份验证命令，或发送PROTOCOLINFO或
+  不止一次，Tor会发送一个错误回复并关闭连接。
+
+  为了防止一些跨协议攻击，即使禁用了Tor中的所有身份验证方法，仍然需要使用AUTHENTICATE命令。在这种情况下，控制器应该只发送“AUTHENTICATE”CRLF。
+ (在0.1.2.16和0.2.0.4-alpha之前版本的Tor在身份验证失败后没有关闭连接。)
+
+3.6。SAVECONF
+
+  从客户端发送到服务器。的语法是:
+ “SAVECONF”[SP“FORCE”]CRLF
+
+  指示服务器将其配置选项写入到其torrc中。如果成功，服务器返回“250 OK”;如果无法写入文件或发生其他错误，服务器返回“551无法写入配置到磁盘”。
+
+  如果在torrc上使用%include选项，SAVECONF将不会将配置写入磁盘。如果提供了标志字符串“FORCE”，即使使用了%include，配置也会被覆盖。在默认情况下使用%include -torrc不会影响SAVECONF。(引入0.3.1.1-alpha)。
+
+  如果控制器想自己编写torrc文件，请参见“getinfo config-text”命令。
+
+  请参见“getinfo config-can-saveconf”命令，以判断是否需要强制标志。(也在0.3.1.1-alpha中引入)
+
+3.7。信号
+
+  从客户端发送到服务器。的语法是:
+ "信号" SP信号CRLF
+
+     信号= "RELOAD" / "SHUTDOWN" / "DUMP" / "DEBUG" / "HALT" / "HUP" / "INT" / "USR1" / "USR2" / "TERM" / "NEWNYM" / "CLEARDNSCACHE" / "HEARTBEAT" / "活动" / "休眠"
+
+  该信号的含义为:
+
+      RELOAD:重新加载配置项。
+      控制关闭:如果服务器是一个OP，立即退出。
+                   如果是OR，请关闭监听器并退出
+                   ShutdownWaitLength秒。
+      DUMP——DUMP stats:记录有关打开的连接和电路的信息。
+      调试:将所有打开的日志切换到日志级调试。
+      立即关闭:清理和退出现在。
+      CLEARDNSCACHE——忘记所有主机名的客户端缓存ip。
+      NEWNYM——切换到干净的电路，这样新的应用程序请求就不会与旧的请求共享任何电路。也清除客户端DNS缓存。(Tor可能会速率限制它对这个信号的反应。)
+      HEARTBEAT——让Tor将一条计划外的HEARTBEAT消息转储到日志中。
+      休眠的——告诉Tor变成“休眠的”。休眠的Tor将尝试避免CPU和网络使用，直到它收到用户发起的网络请求。(不要在中继或隐藏服务上使用这个!)
+      ACTIVE——告诉Tor停止处于“休眠状态”，就好像它收到了一个用户发起的网络请求。
+
+  如果信号被识别，服务器以“250 OK”响应(如果要求立即关闭，则简单地关闭套接字)，或“552”
+  “未被识别的信号”，如果信号未被识别。
+
+  注意，并非所有这些信号都有POSIX信号等价物。可以做到的如下所示。您还可以将这些POSIX名称用于具有它们的信号。
+
+      重载:玫瑰
+      关闭:INT
+      停止:项
+      转储:USR1
+      调试:USR2
+ [在0.4.0.1-alpha中加入休眠信号和激活信号]
+
+3.8。MAPADDRESS
+
+  从客户端发送到服务器。的语法是:
+ "MAPADDRESS" 1*(地址"=地址SP) CRLF
+
+  每对中的第一个地址是一个“原始”地址;第二个是“替代”地址。客户端将此消息发送给服务器，以便告诉它将来的SOCKS对原始地址的连接请求应该被替换为到指定替换地址的连接。如果地址是格式良好的，并且服务器能够满足请求，服务器回复一条250消息:
+
+    250 - oldaddress1 = NewAddress1
+    250 OldAddress2 = NewAddress2
+ 包含源地址和目标地址的。如果请求格式不正确，服务器会以“命令参数中的512语法错误”回复。如果服务器不能满足请求，它会以“451资源耗尽”响应。
+
+  客户端可能拒绝提供原始地址的主体，而是发送一个特殊的空地址(IPv4的“0.0.0.0”，IPv6的“::0”，或主机名的“.”)，表示服务器应该选择原始地址本身，并在答复中返回该地址。服务器应该确保它返回一个不太可能被实际使用的地址空间元素。如果已经有一个地址映射到目标地址，服务器可以重用该映射。
+
+  如果原始地址已经映射到一个不同的地址，旧的映射将被删除。如果原始地址和目标地址相同，服务器将删除原始地址的任何映射。
+
+  例子:
+
+    C: MAPADDRESS为1.2.3.4 = torproject.org
+    年代:250年为1.2.3.4 = torproject.org
+
+    C: GETINFO打/控制
+    250-address-mappings/control=1.2.3.4 torproject.org永远不会
+    年代:250好了
+
+    C: MAPADDRESS为1.2.3.4 =为1.2.3.4
+    年代:250为1.2.3.4 =为1.2.3.4
+
+    C: GETINFO打/控制
+    年代:250 /控制= -地址映射
+    年代:250好了
+ {注意:这个特性被设计用来帮助Tor-ify应用程序需要使用袜子4或主机名不需要袜子5。有三种方法可以做到这一点:
+
+     1. 以某种方式让它们使用SOCKS4a或socks5 with-hostname。
+     2. 使用Tor -resolve(或Tor的over- socks解析功能的另一个接口)远程解析主机名。这对特殊地址(如x.onion或x. y.c isexit)不起作用。
+     3.使用MAPADDRESS将IP地址映射到所需的主机名，然后安排欺骗应用程序，使其认为主机名已解析为该IP。
+
+  此功能旨在帮助实现第三种方法。
+
+  控制器设置的映射持续到Tor进程退出:它们永远不会过期。如果控制器希望映射只持续一段时间，那么它必须在该时间结束时显式地取消对地址的映射。
+
+  MapAddress答复可能包含混合状态代码。
+
+  例子:
+
+    C: MAPADDRESS xxx=@@@ 0.0.0.0=bogus1.google.com
+    语法错误:无效地址'@@@'
+    年代:250 127.199.80.246 = bogus1.google.com
+
+3.9。GETINFO
+
+  从客户端发送到服务器。GETCONF的语法是:
+ 1*(SP关键字)CRLF
+
+  与GETCONF不同，此消息用于未存储在Tor配置文件中的数据，这些数据可能比一行还要长。如果成功，将为每个请求的值发送一个ReplyLine，然后是最后的250 OK
+  ReplyLine。如果一个值适合单行，格式为:
+
+      250 -关键字=价值
+  如果一个值必须分割为多行，格式为:
+
+      250 +关键字=价值。
+  服务器在失败时发送551或552错误。
+
+  可识别的键及其值包括:
+ “版本”——服务器软件的版本，包括软件名称，如“Tor 0.0.9.4”。如果软件名称不在，则假定为“Tor”。
+ “config-file”——Tor的配置文件的位置。
+ config-default -file——Tor的配置默认文件的位置。该文件在torrc之前被解析，通常用于替换Tor的默认配置值。[最初在0.2.3.9 alpha中实现]
+ config-text——如果您向Tor发送SAVECONF命令，它将写入的内容，这样控制器就可以将文件写入磁盘本身。[首次在0.2.2.7-alpha中实现]
+ “exit-policy/default”——Tor将执行的默认退出策略行
+      附加到ExitPolicy配置选项。
+ “exit-policy/reject-private/default”——默认的退出策略行，当情况下，Tor将* prep*到ExitPolicy配置选项
+      ExitPolicyRejectPrivate是1。
+ “exit-policy/ rejectprivate /relay”——Tor将根据ExitPolicyRejectPrivate和的当前值*预先*到ExitPolicy配置选项的特定于中继的退出策略行
+      ExitPolicyRejectLocalInterfaces。这些线路是基于在torrc和继电器的接口上配置的公共地址。如果服务器没有作为洋葱路由器运行，将发送552错误。将发送551内部错误，这可能是暂时的。
+ "exit-policy/ipv4" "exit-policy/ipv6" "exit-policy/full"——这个或这个退出策略，在ipv4 -only, ipv6 -only，或所有条目的风格。以与“退出策略/拒绝-私有/中继”相同的方式处理错误。
+ “desc/id/<或标识>”或“desc/name/<或昵称>”——给定OR的最新服务器描述符。(注意，现代Tor客户端默认情况下不下载服务器描述符，而是下载微描述符。如果启用了微描述符，则需要使用“md”。)
+ “md/all”——整个Tor网络的所有已知微描述符。
+      每个微描述符都以换行符结束。[首次在0.3.5.1-alpha中实现]
+ “md/id/<或标识>”或“md/name/<或昵称>”——对给定的OR的最新微描述符。如果没有微描述符，则为空(因为我们还没有下载微描述符，或者它不在共识中)。[最初在0.2.3.8-alpha中实现]
+ “desc/download-enabled”——“1”，如果我们尝试下载路由器描述符;“0”。[首次在0.3.2.1-alpha中实现]
+ “md/下载启用”——“1”，如果我们尝试下载微描述符;“0”。[首次在0.3.2.1-alpha中实现]
+ “休眠”——非负整数:如果Tor当前处于活动状态并正在构建电路，则为零;如果Tor由于缺乏使用或类似的原因而处于空闲状态，则为非零。[首次在0.2.3.16 alpha中实现]
+ “desc-annotations/id/<或identity>”——为相应的描述符输出注释字符串(源、到达的时间戳、目的等)。[第一次实现在0.2.0.13 alpha。]
+ “extra-info/digest/<digest>”——extrainfo文档，其摘要(十六进制)为<digest>。只有在我们下载额外信息文档时才可以使用。
+ “ns/id/<或身份>”或“ns/name/<或昵称>”——给定或的最新路由器状态信息(v3目录样式)。路由器状态信息在dir-spec中给出。它反映了人们对这款路由器的最新共识。与目录客户端一样，控制器必须容忍无法识别的标志和行。发布日期和描述符摘要是这个Tor认为最好的，不一定是Tor当前拥有的描述符的摘要。最初在0.1.2.3-alpha中实现。[在0.2.0.9-alpha中，从v2目录样式切换到v3目录样式]
+ “ns/all”——路由器状态信息(v3目录样式)，用于所有一致有意见的ORs，通过换行连接。最初在0.1.2.3-alpha中实现。[在0.2.0.9-alpha中，从v2目录样式切换到v3目录样式]
+ “ns/purpose/<purpose>”——所有用于此目的的or的路由器状态信息(v3目录样式)。主要为/ns/用途/桥接查询设计。最初在0.2.0.13 alpha中实现。在0.4.1.1-alpha之前的版本中，当/ns/purpose/bridge被访问时，我们会在网桥上设置运行标志。在0.4.1.1-alpha中，当网桥网络状态文件被写到磁盘时，我们会在网桥上设置运行标志。
+ “desc/all-recent”——用于指定的每个路由器的最新服务器描述符
+      Tor知道。(见md关于上面的“desc/id”和“desc/name”的说明。)
+ “网络状态”——[在0.3.1.1-alpha中被弃用，在0.4.5.1-alpha中被删除。]
+ “address-mappings/all”“address-mappings/config”“address-mappings/cache”“address-mappings/control”——一个\r\n个分隔的地址映射列表，每个形式的“从地址到地址的到期”。
+      'config'键返回配置中设置的地址映射;“cache”键返回客户端DNS缓存中的映射;“control”键返回通过控制接口设置的映射;“all”目标返回通过任何机制设置的映射。
+      Expiry的格式与ADDRMAP事件一样，除了“Expiry”总是UTC格式的时间或字符串“NEVER”;4.1.7看到部分。
+      在0.2.0.3-alpha中首次引入。
+ “addr-mappings/*”——对于地址映射/*，但是没有值的到期部分。从0.2.0.3-alpha开始就不提倡使用该值;使用打。
+ “地址”——最好的猜测我们的外部IP地址。如果我们没有猜测，返回一个551错误。在0.1.2.2-alpha(添加)
+ “地址/v4”“地址/v6”的最佳猜测在我们各自的外部IPv4或IPv6地址。
+      如果我们没有猜测，返回一个551错误。在0.4.5.1-alpha(添加)
+ “指纹”——Tor以中继形式写入的指纹文件的内容，如果我们目前不是中继，则为551。在0.1.2.3-alpha(添加)
+ “circuit-status”
+      电路状态事件的一系列线路。每一行都是4.1.1节中描述的形式，省略了首字母“650 CIRC”。请注意，客户端必须准备接受4.1节中描述的其他参数。
+ “stream-status”
+      流状态事件的一系列行。每一项均为以下形式:
+         StreamID SP流状态SP循环SP目标CRLF
+ “orconn-status”
+      连接状态事件的一系列行。在Tor
+      在Tor中启用了VERBOSE_NAMES特性的0.1.2.2 alpha
+      0.2.2.1-alpha和later默认每一行为如下形式:
+         LongName SP或status CRLF
+
+     在Tor版本0.1.2.2-alpha到0.2.2.1-alpha的功能
+     VERBOSE_NAMES关闭后，在版本0.1.2.2 alpha之前，每一行都是这样的:
+         ServerID SP或状态CRLF
+ “entry-guards”
+      列出当前选择的入口守卫(如果有的话)的一系列行。
+      在Tor 0.1.2.2-alpha中启用功能VERBOSE_NAMES和Tor中
+      0.2.2.1-alpha和later默认每一行为如下形式:
+         状态[SP等时]CRLF
+
+     在Tor版本0.1.2.2-alpha到0.2.2.1-alpha的功能
+     VERBOSE_NAMES关闭后，在版本0.1.2.2 alpha之前，每一行都是这样的:
+         ServerID2 SP状态[SP等时]CRLF
+         ServerID2 =昵称/ 40*HEXDIG
+
+      Status的定义是一样的:
+         状态=“上”/“未连接”/“下”/“不可用”/“未列出”
+ 从0.1.1.4-alpha到0.1.1.10-alpha, entry-guard被称为“helper-nodes”。Tor仍然支持调用“helper-nodes”，但它已被弃用，不应该被使用。
+ [旧版本的Tor(在0.1.2.x-final之前)生成'down'而不是unlisted/unusable。0.1.2之间。x-final和0.2.6.3-alpha, down从未生成。]
+ [XXXX ServerID2与ServerID的不同之处在于它不给指纹加上$前缀。这是一个实现错误。如果我们能在不破坏兼容性的情况下把$加回来，那就太好了。
+ “流量/读取”——读取(下载)的总字节数。
+ “流量/写入”——写入(上传)的总字节数。
+ “正常运行时间”——Tor守护进程的正常运行时间(单位为秒)。添加到
+       0.3.5.1-alpha。
+ “会计/启用”“会计/休眠”“会计/字节”“会计/字节-左”“会计/间隔-开始”“会计/间隔-唤醒”“会计/间隔-结束”
+      关于会计状况的信息。如果会计启用，“启用”为1;否则就是0。如果我们没有接受任何数据，“冬眠”的领域是“困难的”;如果我们不接受新连接，就叫“软”;如果我们完全不冬眠，就叫“清醒”。“bytes”和“bytes-left”字段分别包含(read-bytes SP write-bytes)，用于开始和间隔的其余部分。“间隔开始”和“间隔结束”字段是当前间隔的边界;“interval-wake”字段是我们计划[ned]开始活动的当前间隔(如果有的话)内的时间。时间是UTC的。
+ “配置/名称”
+      列出可用配置选项的一系列行。每一项均为以下形式:
+         OptionType [SP文档]CRLF
+         OptionName =关键字
+         OptionType = "Integer" / "TimeInterval" / "TimeMsecInterval" / "DataSize" / "Float" / "Boolean" / "Time" / "CommaList" / "Dependent" / "Virtual" / "String" / "LineList"
+         文本文档=
+      注意:在Tor 0.1.1.4-alpha中引入“Dependant”这个键时，就使用了错误的拼写，直到在Tor中更正为止
+      0.3.0.2-alpha。建议客户端接受这两种拼写方式。
+ “配置/违约”
+      列出每个配置选项的默认值的一系列行。没有有效默认值的选项不会出现在列表中。在Tor 0.2.4.1-alpha中引入。
+         选项名称SP选项值CRLF
+         OptionName =关键字
+         用OptionValue =文本
+ “信息/名称”
+      列出可用GETINFO选项的一系列行。每一种都是下列形式之一:
+         OptionName SP文档CRLF
+         OptionPrefix SP文档CRLF
+         OptionPrefix = OptionName "/*"
+      OptionPrefix形式表示以前缀开头的许多选项。所以如果“config/*”被列出，其他以“config/”开头的选项也可以工作，但是“config/*”本身不是一个选项。
+ “事件/名称”
+      的所有事件的空格分隔列表
+      Tor setevent。
+ “功能/名称”
+      一个空格分隔的列表，列出了这个版本Tor的使用特性所支持的所有特性。
+ “信号/名称”
+      用空格分隔的信号命令支持的所有值列表。
+ “ip-to-country/ipv4-available”“ip-to-country/ipv4-available”“1”如果有相关的geoip或geoip6数据库;“0”。
+      这个字段是在Tor 0.3.2.1-alpha中添加的。
+ “ip-to-country / *”
+      将IP地址映射为两个字母的国家代码。例如，“GETINFO ip-to-country/18.0.0.1”应该给出“US”。
+ “进程/pid”——属于主tor进程的进程id。“进程/uid”——运行tor进程的用户id，如果未知则为-1(在Windows上未实现，返回-1)。“进程/用户”——运行tor进程的用户名，如果不存在，则提供一个空字符串(未实现)
+     窗口，返回一个空字符串)。“进程/描述符限制”——文件描述符限制的上限，如果未知，则为-1
+ “dir / status-vote /电流/共识”[中添加Tor 0.2.1.6-alpha]“dir / status-vote /电流/ consensus-microdesc”[中添加Tor 0.4.3.1-alpha]“dir /地位/权威”“dir /地位/ fp / F > <”“dir /地位/ fp / < F1 > + < F2 > + < F3 >”“dir /地位/”“dir /服务器/ fp / < F >”“dir /服务器/ fp / < F1 > + < F2 > + < F3 >”“dir /服务器/ d / d > <”“dir /服务器/ d / < D1 > + < D2 > + < D3 >”“dir /服务器/权威”“dir /服务器/所有”
+      根据dir-spec.txt第4.4节中列出的url规范提供的一系列列示目录内容的行。注意，Tor不能提供私有信息，比如没有标记为通用用途的路由器的描述符。当被问及这个Tor不是权威的“权限”信息时，Tor会用一个空字符串回答。
+
+      注意，在Tor 0.2.3.3-alpha中，Tor客户端不再下载服务器描述符，而是下载微描述符。因此，对所有“GETINFO dir/server/*”请求的“551服务器不可用”回复实际上是正确的。如果您有一个绝对需要服务器描述符才能工作的旧程序，请尝试将UseMicrodescriptors设置为0或
+      FetchUselessDescriptors 1在您的客户的torrc。
+ “状态/电路建立”“状态/足够dirl -info”“状态/良好服务器-描述符”“状态/接受服务器-描述符”“状态/…”
+      它们为不同的Tor状态提供了当前的内部Tor值。详见第4.1.10节。(只有少数的状态事件是可用的getinfo的当前。如果你想要更多的曝光，请告诉我们。)“状态/ reachability-succeeded /或”
+      0还是1，取决于我们是否发现ORPort是可达的。”状态/ reachability-succeeded / dir”
+      0还是1，取决于我们是否找到了DirPort可达性。
+      如果没有DirPort，因此不需要可达性检查。“状态/ reachability-succeeded””或= "(“0”或“1”)SP " DIR = "(“0”或“1”)
+      结合状态/ reachability-succeeded / *;控制器必须忽略此条目中无法识别的元素。“状态/ bootstrap-phase”
+      返回最近发送的引导阶段状态事件。具体来说，它返回一个以“注意BOOTSTRAP…”或“警告BOOTSTRAP…”开头的字符串。当控制器连接或附加到Tor时，应该使用这个getinfo来了解它当前的引导状态。“状态/版本/推荐”
+      当前推荐的版本列表。“当前状态/版本/”
+      当前版本的状态。其中:新、旧、不推荐、推荐、系列新、过时、未知。“状态/ clients-seen”
+      我们最近看到的客户来自哪些国家的摘要，格式与中描述的CLIENTS_SEEN状态事件相同
+      部分4.1.14。这个GETINFO选项目前仅对桥接继电器可用。“状态/ fresh-relay-descs”
+      为我们的中继提供新服务器和额外信息描述符。注意，这*并不是我们发布的最新描述符，而是如果现在需要创建一个新的描述符，我们将生成的描述符。
+ “net/listeners/ *”
+
+      一个用引号括起来，用空格分隔的位置列表，其中包含Tor监听指定类型的连接的位置。这些可以包含IPv4网络地址…
+ “127.0.0.1:9050”“127.0.0.1:9051”
+ …或本地unix套接字…
+ “unix: / home / my_user / .tor /插座”
+ …或IPv6网络地址:
+ “2001:0db8:7000:0000:0000:死了:牛肉:1234:9050”
+ [新加入Tor 0.2.2.26 beta。]
+ “net/listeners/or”
+
+      用于或连接的侦听器。按照Tor -spec.txt中描述的方式对话Tor协议。
+ “net/listeners/dir”
+
+      Tor目录协议的监听器，如在dir-spec.txt中描述的。
+ “net/listeners/socks”
+
+      用于使用SOCKS4/4a/5协议的洋葱代理连接的侦听器。
+ “net/listeners/trans”
+
+      防火墙重定向透明连接的监听器，如pf或netfilter。
+ “net/listeners/natd”
+
+      用于natd重定向的透明连接的监听器。
+ “net/listeners/dns”
+
+      Tor网络支持的DNS协议子集的监听器。
+ “net/listeners/control”
+
+      监听器的Tor控制协议，在这里描述。
+ “net/listeners/extor”
+
+      侦听器对应于扩展的ORPorts，以便与可插入传输集成。见建议180和196。
+ “net/listeners/httptunnel”
+
+      利用HTTP连接隧道的洋葱代理连接监听器。
+ extor和httptunnel列表在0.3.2.12、0.3.3.10和
+      0.3.4.6-rc。)
+ “dir-usage”
+      一个以换行分隔的列表，列出我们为回答每种类型的目录请求所服务的字节数。每行格式为:
+         关键字1*SP Integer 1*SP Integer其中第一个整数是写入的字节数，第二个是应答的请求数。
+ [该功能是在Tor 0.2.2.1-alpha中添加的，在Tor 0.2.2.1-alpha中被删除。
+       Tor 0.2.9.1-alpha。即使它存在，也只有在使用
+       工具下载或RUNNING_DOXYGEN编译时选项。
+ “bw-event-cache”
+      用空格分隔的最近BW事件摘要，按时间顺序从最早到最新。每个事件都由逗号分隔的元组“R,W”表示，R是读取的字节数，W是写入的字节数。这些条目每一个都代表大约一秒钟的流量。[新加入Tor 0.2.6.3-alpha]
+ “共识/经”“共识/ fresh-until”“共识/有效期至”
+      它们中的每一个都会产生一个等时函数，描述当前Tor拥有的(有效的，被接受的)一致意见的生命周期的一部分。[新加入Tor 0.2.6.3-alpha]
+ “hs /客户/ desc / id / < ADDR > "
+      打印与给定的<ADDR>对应的隐藏服务描述符的内容，<ADDR>是一个没有"的洋葱地址。洋葱”部分。
+      查询客户机的缓存以查找描述符。描述符的格式在rend-spec.txt文档的1.3节中进行了描述。
+
+      如果<ADDR>无法识别，或者在缓存中没有找到，则返回551错误。
+ [新增了Tor 0.2.7.1-alpha] [HS v3支持增加了0.3.3.1-alpha]
+ “商品/服务/ desc / id / < ADDR > "
+      打印与给定的<ADDR>对应的隐藏服务描述符的内容，<ADDR>是一个没有"的洋葱地址。洋葱”部分。
+      查询服务的本地描述符缓存以查找描述符。
+      描述符的格式在rend-spec.txt文档的1.3节中进行了描述。
+
+      如果<ADDR>无法识别，或者在缓存中没有找到，则返回551错误。
+ [新增Tor 0.2.7.2-alpha] [HS v3支持增加0.3.3.1-alpha]
+ “洋葱/电流”“洋葱/分离”
+      通过“ADD_ONION”命令创建的洋葱(“隐藏”)服务的新行分隔列表。“current”键返回属于当前控制连接的洋葱服务。“分离”键返回从父控制连接分离的洋葱服务(例如，属于无控制连接)。
+      每行格式为:
+         HSAddress[新的在Tor 0.2.7.1-alpha。[HS v3支持增加了0.3.3.1-alpha]
+ “network-liveness”
+      字符串“向上”或“向下”，表示我们当前是否认为网络是可访问的。
+ “下载/”
+      下载/下的键用于查询下载状态;它们都返回一个以换行符结尾的十六进制编码摘要序列，或者一个“序列化下载状态”，如下所示:
+
+       SerializedDownloadSatus =
+         ——我们计划在什么时候尝试下载这个对象?“下一个尝试-在”SP等时CRLF
+         ——自从上次成功以来，我们失败了多少次?"n-download-failure " SP UInt CRLF
+         我们下载了多少次了?“n-download-尝试”SP UInt CRLF
+         ——我们将根据哪个时间表来下载这个?“计划”SP下载计划CRLF
+         ——我们想要从一个权威获取这个，还是任何缓存都可以?“想要权威”SP下载想要权威CRLF
+         ——当我们无法获取时，我们是否会增加下载延迟，
+         ——或者当我们试图获取这个时?“增量-上”SP下载增量在CRLF
+         ——我们是确定地增加下载进度，还是at
+         ——随机?"backoff" SP下载backoff CRLF [
+           随着指数级倒退，我们的进度如何?“last-backoff-position”使用Uint CRLF
+           指数后退，我们上次延误是什么时候?"最后延迟使用UInt CRLF]
+ 在哪里
+
+      DownloadSchedule = "DL_SCHED_GENERIC" / "DL_SCHED_CONSENSUS" / "DL_SCHED_BRIDGE"
+      DownloadWantAuthority = "DL_WANT_ANY_DIRSERVER" / "DL_WANT_AUTHORITY"
+      DownloadIncrementOn = "DL_SCHED_INCREMENT_FAILURE" / "DL_SCHED_INCREMENT_ATTEMPT"
+      DownloadBackoff = "DL_SCHED_DETERMINISTIC" / " dl_sched_random_exponent "
+
+      如果DownloadBackoff为“dl_sched_random_指数式”，则可选的最后两行必须存在;如果DownloadBackoff为“DL_SCHED_DETERMINISTIC”，则必须不存在。
+
+      具体来说，支持的键有:
+ “下载/ networkstatus / ns”
+        无论当前的引导状态是什么，ns调味共识的SerializedDownloadStatus。
+ “下载/ networkstatus / ns /引导”
+        在引导时，无论我们当前是否在引导，ns调味的SerializedDownloadStatus一致。
+ “下载/ networkstatus / ns /运行”
+
+        在运行时，序列化下载状态为ns风格的共识，而不管我们当前是否在引导。
+ “下载/ networkstatus / microdesc”
+        无论当前的引导状态是什么，microdesc风格一致的SerializedDownloadStatus。
+ “下载/ networkstatus / microdesc /引导”
+        无论我们当前是否在引导，在引导时，microdesc风格的SerializedDownloadStatus一致。
+ “下载/ networkstatus / microdesc /运行”
+        当运行时，无论我们当前是否在引导，SerializedDownloadStatus为microdesc风格一致。
+ “下载/证书/ fps”
+
+        下载状态可用的权威证书的十六进制编码摘要的新行分隔列表。
+ “下载/证书/ fp /指纹> <”
+        由downloads/cert/fps密钥返回的身份摘要<Fingerprint>的默认证书的SerializedDownloadStatus。
+ “下载/证书/ fp / <指纹> / sks”
+        由downloads/cert/fps密钥返回的权威身份摘要<Fingerprint>的十六进制签名密钥摘要列表，以换行符分隔。
+ “下载/证书/ fp / <指纹> / < SKDigest >”
+        下载/cert/fps密钥返回的身份摘要<Fingerprint>和下载/cert/fp/<Fingerprint>/ sks密钥返回的签名密钥摘要<SKDigest>证书的SerializedDownloadStatus。
+ “下载/ desc / desc”
+        一个以新行分隔的十六进制编码的路由器描述符摘要列表[注意，不是标识摘要- Tor进程在下载路由器描述符时可能还没有看到它们]。如果Tor进程没有使用ns风格的一致意见，则返回一个551错误。
+ “下载/ desc / <消化> "
+        路由器描述符的SerializedDownloadStatus，摘要<摘要>，由downloads/desc/descs键返回。如果Tor进程没有使用ns风格的一致意见，则返回一个551错误。
+ “下载/桥桥梁”
+        以新行分隔的十六进制编码的桥接标识摘要列表。如果Tor进程没有使用桥接器，则返回一个551错误。
+ “下载/桥/ <消化> "
+        桥接描述符的SerializedDownloadStatus，其标识摘要<摘要>是由downloads/bridge/bridges键返回的。如果Tor进程没有使用桥接器，则返回一个551错误。
+ “老/电流”“sr /之前”
+      当前或以前的共享随机值，在consensus中接收，base-64编码。空值意味着一致性没有共享的随机值，或者Tor没有一致性。
+ “当前时间/当地”“当前时间/ utc”
+      当前系统或UTC时间，由系统以ISOTime2格式返回。(引入0.3.4.1-alpha)。
+ “数据/ ntor /要求”“数据/ ntor /分配”
+      NTor电路洋葱握手记录被请求或分配的值。(在0.4.5.1-alpha介绍)
+ “数据/开发/要求”“数据/开发/分配”
+      被请求或分配的TAP电路洋葱握手记录值。(在0.4.5.1-alpha介绍)
+ “config-can-saveconf”
+      取决于是否可以在不使用的情况下使用SAVECONF
+      力国旗。(引入0.3.1.1-alpha)。
+ “限制/ max-mem-in-queues”
+      Tor的内存不足检查器将允许的内存总量
+      在它开始释放内存和杀死电路之前分配(在它能看到的地方)。有关更多细节，请参阅MaxMemInQueues选项。与这个选项不同，这个值反映了Tor的实际限制，可以根据可用的系统内存而不是MaxMemInQueues选项进行调整。(在0.2.5.4-alpha介绍)
+
+  例子:
+
+     C: GETINFO版本desc/name/moria1
+     年代:250 + desc /名称/瑞=
+     S: [moria的描述]
+     S:。
+     年代:250 - version = Tor 0.1.1.0-alpha-cvs
+     年代:250好了
+
+3.10。EXTENDCIRCUIT
+
+  从客户端发送到服务器。格式是:
+ " extension circuit " SP circuit [SP ServerSpec *("，" ServerSpec ")] [SP "purpose=" purpose] CRLF
+
+  这个请求需要两种形式之一:要么CircuitID为零,在这种情况下,这是一个请求服务器建立一个新的电路,或者CircuitID非零,在这种情况下,这是一个请求的服务器扩展现有电路根据指定的路径与ID。
+
+  如果电路是0，控制器可以选择提供路径，让Tor使用，以建立电路。如果它不提供路径，Tor将根据path-spec.txt从高容量节点中自动选择一个路径。
+
+  如果电路为0，指定“purpose=”，则设置电路的目的，可以选择“general”和“controller”。如果没有指定，电路被创建为“一般”。
+
+  如果请求成功，服务器发送一个包含包含包含电路(可能是新创建的)的电路的电路体的回复。语法是"250" SP "EXTENDED" SP circuit itid CRLF。
+
+3.11。SETCIRCUITPURPOSE
+
+  从客户端发送到服务器。格式是:
+ " setcircuit itpurpose " SP circuit itid SP "purpose=" CRLF .
+
+  这改变了电路的用途。详情请参阅上面的EXTENDCIRCUIT。
+
+3.12。SETROUTERPURPOSE
+
+  从客户端发送到服务器。格式是:
+ “setrouter用途”SP别名或关键SP用途CRLF
+
+  这改变了描述符的用途。详情请参阅下面的+POSTDESCRIPTOR。
+
+  注意:从Tor开始，这个命令就被禁用并作废了
+  0.2.0.8-alpha。它已经不存在了，列在这里只是出于历史原因。
+
+3.13。ATTACHSTREAM
+
+  从客户端发送到服务器。的语法是:
+ "ATTACHSTREAM" SP StreamID SP CircuitID [SP "HOP=" HopNum] CRLF .
+
+  此消息通知服务器指定的流应与指定的电路相关联。每个流最多可以与一个电路相关联，而多个流可以共享同一电路。
+  流只能附加到已完成的电路上(也就是说，已经发送了电路状态“已构建”事件的电路，或者被列为已构建的电路
+  GETINFO circuit-status请求)。
+
+  如果电路ID为0，则连接给定流的责任返回给Tor。
+
+  如果指定了HOP=HopNum, Tor将选择电路中的HopNumth跳作为出口节点，而不是电路中的最后一个节点。
+  啤酒花1-indexed;通常，它不允许附加到跳1。
+
+  如果它可以连接流，Tor会响应“250 OK”;如果电路或流不存在，Tor会响应“552 OK”;如果流没有处于合适的连接状态(例如，它已经打开)，Tor会响应“555 OK”;如果流由于其他原因无法连接，Tor会响应“551 OK”。
+ {实现说明:Tor将自己关闭未连接的流，大约在它们产生后两分钟。如果出现了问题，请让开发人员知道。
+ {实现说明:默认情况下，Tor自动将流附加到电路本身，除非配置变量“剩余剩余”被设置为“1”。当“剩余流”为false时试图通过TC附加流可能会导致流之间的竞争
+  Tor和控制器，因为它们都试图将流附加到电路上。
+ {实现说明:您可以尝试attachstream到一个已经发送了连接或解析请求但还没有成功的流，在这种情况下，Tor会在继续处理新的attach请求之前将该流从当前电路中分离出来。}
+
+3.14。POSTDESCRIPTOR
+
+  从客户端发送到服务器。的语法是:
+ "+POSTDESCRIPTOR" [SP "purpose=" purpose] [SP "cache=" cache]
+                      CRLF的描述。"CRLF
+
+  此消息通知服务器一个新的描述符。如果指定了目的，它必须是“通用”、“控制器”或“桥”，否则我们将返回一个552错误。默认值是“general”。
+
+  如果缓存被指定，它必须是“否”或“是”，否则我们返回一个552错误。如果没有指定缓存，Tor将自行决定是否要缓存描述符，控制器不能依赖于它的选择。
+
+  在解析描述符时，必须包含许多指定良好的字段，包括用于其昵称和标识的字段。
+
+  如果在解析描述符时出现错误，服务器必须发送一个“554无效描述符”应答。如果描述符是格式良好的，但是服务器选择不添加它，那么它必须用251消息回复，该消息的正文解释了为什么没有添加服务器。如果添加了描述符，Tor将以“250 OK”响应。
+
+3.15。REDIRECTSTREAM
+
+  从客户端发送到服务器。的语法是:
+ “重定向流”SP地址[SP端口]CRLF
+
+  告诉服务器更改指定流上的退出地址。如果
+  指定端口时，也更改目标端口。对新提供的地址不执行重新映射。
+
+  为了确保修改后的地址将被使用，这个事件必须在接收到新的流事件之后，在将这个流附加到电路之前发送。
+
+  Tor成功回复“250 OK”。
+
+3.16。CLOSESTREAM
+
+  从客户端发送到服务器。的语法是:
+ “关闭”SP原因*(SP标志)CRLF
+
+  告诉服务器关闭指定的流。原因应该是Tor继电器端原因之一，在Tor规范中给出。txt，表示十进制。当前未使用标志;Tor服务器应该忽略未识别的标志。Tor可以保持流打开一段时间，以刷新任何挂起的数据。
+
+  Tor在成功时回复“250 OK”，如果没有足够的参数则回复512，如果不识别StreamID或原因则回复552。
+
+3.17。CLOSECIRCUIT
+
+   的语法是:
+ "CLOSECIRCUIT" SP电路*(SP标志)CRLF
+     国旗= " IfUnused "
+
+  告诉服务器关闭指定的电路。如果提供了“IfUnused”，不要关闭电路，除非它是没有用的。
+
+  将来可能会定义其他标志;Tor应该忽略无法识别的标志。
+
+  Tor在成功时回答“250 OK”，如果没有足够的参数就回答512，如果不能识别电路就回答552。
+
+3.18。辞职
+
+  告诉服务器挂起这个控制器连接。可以在验证之前使用此命令。
+
+3.19。USEFEATURE
+
+  向控制协议添加附加特性有时会破坏向后兼容性。最初，这些特性被添加到Tor中，并在默认情况下禁用。USEFEATURE可以启用这些附加特性。
+
+  的语法是:
+ "USEFEATURE" *(SP FeatureName) CRLF
+    FeatureName = 1*(ALPHA / DIGIT / "_" / "-")
+
+  特性名称不区分大小写。
+
+  一旦启用，一个特性将在与控制器的连接期间保持启用状态。必须打开到控制器的新连接以禁用已启用的特性。
+
+  特性是一种向前兼容机制;每个特性最终都将成为控制协议的标准部分。一旦某个特性成为协议的一部分，它就永远处于开启状态。每个特性都记录了它作为特性引入的版本以及它成为协议一部分的版本。
+
+  Tor会忽略使用任何始终处于开启状态的特性的请求。Tor会给出一个552错误来回应一个未被识别的特征。
+
+  EXTENDED_EVENTS
+
+     与传递'EXTENDED'到SETEVENTS相同;这是请求扩展事件语法的首选方法。
+
+     这个特性最初是在0.1.2.3-alpha中引入的。它总是打开的，并且是Tor 0.2.2.1-alpha及以后版本协议的一部分。
+
+  VERBOSE_NAMES
+
+     在事件和GETINFO结果中将ServerID替换为LongName。LongName为所有路由器提供指纹、命名状态指示以及已知路由器的昵称。严格地说，LongName比ServerID提供的信息更多，后者只提供指纹或昵称。
+
+     这个特性最初是在0.1.2.2-alpha中引入的。它总是打开的，并且是Tor 0.2.2.1-alpha及以后版本协议的一部分。
+
+3.20。解决
+
+  语法
+ “RESOLVE”*选项*地址CRLF
+    选择= "模式=逆转”
+    Address =主机名或IPv4地址
+
+  此命令为每个指定的请求启动一个远程主机名查找请求(如果指定了“mode=reverse”，则进行反向查找)。注意，请求是在后台完成的:要查看答案，控制器需要侦听ADDRMAP事件;请参阅下面的4.1.7。
+ [加入Tor 0.2.0.3-alpha]
+
+3.21。PROTOCOLINFO
+
+  的语法是:
+ "PROTOCOLINFO" *(SP PIVERSION) CRLF
+
+  服务器回复格式为:
+ “250- protocolinfo”SP PIVERSION CRLF *InfoLine“250 OK”CRLF
+
+    InfoLine = AuthLine / VersionLine / OtherLine
+
+     AuthLine =" 250-AUTH" SP "METHODS=" AuthMethod *("，" AuthMethod)
+                       *(SP "COOKIEFILE=" AuthCookieFile) CRLF
+     版本在线=" 250版本" SP "Tor=" TorVersion OptArguments CRLF
+
+     AuthMethod = "NULL" /;不需要认证"HASHEDPASSWORD" /;控制器必须提供原始密码“COOKIE”/;…或提供cookie文件“SAFECOOKIE”的内容;…或证明了解一个cookie文件的内容
+
+     AuthCookieFile = QuotedString
+     TorVersion = QuotedString
+
+     关键字OptArguments CRLF
+
+    PIVERSION: 1 *数字
+
+  这个命令告诉控制器支持什么类型的身份验证。
+
+  Tor可以以任何顺序给它的InfoLines;控制器必须忽略具有它们不能识别的关键字的InfoLines。控制器必须忽略任何InfoLine上的无关数据。
+
+  如果有一天我们彻底改变了语法，就可以使用转向。现在它应该总是“1”。控制器可以提供它们支持的协议信息版本的列表;Tor可以选择控制器不支持的版本。
+
+  AuthMethod用于指定Tor当前接受的一个或多个控制身份验证方法。
+
+  AuthCookieFile指定认证cookie的绝对路径和文件名，该cookie是Tor期望的，并在iff的情况下提供
+  方法字段包含方法“COOKIE”和/或“SAFECOOKIE”。
+  控制器必须处理此字符串中的转义序列。
+
+  所有身份验证cookie都是32字节长。控制器不能使用非32字节长的文件的内容作为身份验证cookie。
+
+  如果方法字段包含方法“SAFECOOKIE”，则每个
+  AuthCookieFile必须包含相同的认证cookie。
+
+  当控制器的文件系统读访问权限大于它所连接的进程时，COOKIE身份验证方法将运行控制器的用户暴露给非预期的信息泄露攻击。(注意，控制器可以连接到Tor之外的进程。)即使控制器的用户显式地指定了从哪个文件名读取身份验证cookie，使用它也几乎不安全。由于这个原因，COOKIE身份验证方法已被弃用，并将从Tor的未来版本中删除。
+
+  版本行包含Tor版本。
+ [与认证之外的其他命令不同，在认证之前可以使用PROTOCOLINFO(但只能使用一次!)]
+ [在Tor 0.2.0.5-alpha之前不支持PROTOCOLINFO。]
+
+3.22。LOADCONF
+
+  的语法是:
+ "+LOADCONF" ConfigText " CRLF "。CRLF
+
+  此命令允许控制器通过控制端口将配置文件的文本上传到Tor。然后，就像从磁盘读取配置文件一样加载该配置文件。
+ [LOADCONF是在Tor 0.2.1.1-alpha中添加的]
+
+3.23。TAKEOWNERSHIP
+
+  的语法是:
+ “TAKEOWNERSHIP CRLF
+
+  此命令指示Tor在关闭此控制连接时关闭。这个命令影响每个独立发送它的控制连接;如果多个控制连接向Tor实例发送TAKEOWNERSHIP命令，那么当其中任何一个连接关闭时，Tor将关闭。
+ (作为Tor 0.2.5.2-alpha, Tor不等待一段时间的电路关闭时关闭，因为退出的控制器。如果你想确保一个干净的关机——你应该这样做!——然后发送”信号
+  关闭”，并等待Tor进程关闭。)
+
+  此命令用于与剩余的owningcontrollerprocess配置选项一起使用。一个控制器启动一个用户不能轻易控制或停止的Tor进程应该“拥有”该Tor进程:
+
+    *当启动Tor时，控制器应该在Tor的命令行上的一个剩余的owningcontrollerprocess中指定它的PID。这将导致Tor轮询是否存在具有该PID的进程，如果没有找到这样的进程，则退出。(这并不是检测“拥有控制器”是否仍在运行的完全可靠的方法，但在大多数情况下应该可以很好地工作。)
+
+    *一旦控制器连接到Tor的控制端口，它应该沿着控制连接发送TAKEOWNERSHIP命令。在这一点上，*both* TAKEOWNERSHIP命令和剩余的owningcontrollerprocess选项有效:Tor将退出时，控制连接结束*和* Tor将退出，如果它检测到没有进程与指定的PID在剩余owningcontrollerprocess选项。
+
+    *控制器发送完TAKEOWNERSHIP命令后，它应该沿着控制连接发送“RESETCONF余下的owningcontrollerprocess”。这将导致Tor停止轮询具有其控制器PID的进程的存在;当控制连接结束时，Tor仍然会退出。
+ [TAKEOWNERSHIP加入到Tor 0.2.2.28 beta中]
+
+3.24。AUTHCHALLENGE
+
+  的语法是:
+ SP“AUTHCHALLENGE SAFECOOKIE”
+                    SP ClientNonce
+                    CRLF
+
+    ClientNonce = 2*HEXDIG / QuotedString
+
+  属性的身份验证例程使用此命令
+  安全认证方法。
+
+  如果服务器接受该命令，服务器回复格式为:
+ “250 AUTHCHALLENGE”
+            SP SERVERHASH SERVERHASH =
+            SP SERVERNONCE SERVERNONCE =
+            CRLF
+
+    hexdig ServerHash = 64 * 64
+    hexdig ServerNonce = 64 * 64
+
+  对象的ClientNonce、ServerHash和ServerNonce值的编码/解码方式与传递给对象的参数相同
+  验证命令。ServerNonce必须是32字节长。
+
+  ServerHash计算如下:
+
+    Tor安全cookie认证服务器到控制器哈希
+                | ServerNonce)
+ (HMAC键作为它的第一个参数)
+
+  控制器发送一个成功的AUTHCHALLENGE命令后，连接上发送的下一个命令必须是一个身份验证命令，该身份验证命令将接受的唯一身份验证字符串为:
+
+    Tor安全cookie认证控件到服务器哈希
+                | ServerNonce)
+ [与除了AUTHENTICATE之外的其他命令不同，AUTHCHALLENGE可以在AUTHENTICATE之前使用(但只能使用一次!)]
+ [在Tor 0.2.3.13-alpha中添加了AUTHCHALLENGE。]
+
+3.25。DROPGUARDS
+
+  的语法是:
+ “DROPGUARDS CRLF
+
+  告诉服务器放下所有保护节点。不要轻易使用这一命令;随着时间的推移，它会增加跟踪攻击的脆弱性。
+
+  Tor成功回复“250 OK”。
+ [dropguard在Tor 0.2.5.2-alpha中添加]
+
+3.26。HSFETCH
+
+  的语法是:
+ “HSFETCH”SP (HSAddress /“v”版本”-“DescId”)
+              *[SP "SERVER=" SERVER] CRLF
+
+    HSAddress = 16*Base32Character / 56*Base32Character
+    版本= "2" / "3"
+    DescId = 32 * Base32Character
+    服务器= LongName
+
+  此命令启动给定的隐藏服务描述符获取
+  HSAddress或DescId。
+
+  HSAddress可以是版本2或版本3的地址。下行id只能是版本2的id。版本2的地址由16* base32字符组成，版本3的地址由56* base32字符组成。
+
+  如果指定了DescId，则还必须提供至少一个服务器，否则将返回512错误。如果没有指定DescId和服务器，它的行为就像一个普通的Tor客户端描述符获取。如果有一个或多个
+  当服务器被给定时，它们被用来代替在每个服务器上并行地触发一个获取。
+
+  使用此命令获取描述符时的缓存行为与正常的Tor客户端行为相同。
+
+  关于如何计算描述符id (DescId)的详细信息可以在rend-spec.txt章节1.3中找到。
+
+  如果不能识别任何值，则返回一个513错误并停止命令。如果成功，Tor将响应“250 OK”，那么Tor最终必须在此之后同时执行HS_DESC和HS_DESC_CONTENT事件并获得结果。如果
+  服务器，然后为每个位置发出事件。
+
+  例子有:
+
+     C: HSFETCH v2-gezdgnbvgy3tqolbmjrwizlgm5ugs2tl
+        服务器= 9695 dfc35ffeb861329b9f1ab04c46397020ce31
+     年代:250好了
+
+     C: HSFETCH ajkhdsfuygaesfaa
+     年代:250好了
+
+     C: HSFETCH vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd
+     年代:250好了
+ [HSFETCH在Tor 0.2.7.1-alpha中添加][HS v3支持添加0.4.1.1-alpha]
+
+3.27。ADD_ONION
+
+  的语法是:
+ "ADD_ONION" SP KeyType ":" KeyBlob [SP "Flags=" Flag *("，" Flag)] [SP "MaxStreams=" NumStreams]
+            1*(SP "Port=" VirtPort ["，" Target])
+            *(SP "ClientAuth=" ClientName [":" ClientBlob]
+
+    KeyType = "NEW" /;服务器生成算法KeyBlob“RSA1024”/的密钥;服务器应该使用在KeyBlob (v2)中提供的1024位RSA密钥。“ED25519-V3”;服务器应该使用as中提供的ed25519 v3密钥
+                   KeyBlob (v3)。
+
+    KeyBlob = "BEST" /;服务器应该使用“最佳”算法生成密钥(KeyType == "NEW")。[在0.4.2.3-alpha版本中，使用ED25519-V3] "RSA1024";服务器应该生成一个1024位的RSA密钥(KeyType == "NEW") (v2)。“ED25519-V3”;服务器应该生成ed25519私钥(KeyType == "NEW") (v3)。
+     字符串;序列化的私钥(没有空格)
+
+    Flag = "DiscardPK" /;服务器不应该将新生成的私钥作为响应的一部分。“分离”/;不要将新创建的洋葱服务关联到当前控制连接。“BasicAuth”/;需要使用“basic”方法(仅适用于v2)进行客户端授权。“NonAnonymous”/;添加一个非匿名的单个洋葱服务。Tor检查这个标志是否匹配它配置的隐藏服务匿名模式。“MaxStreamsCloseCircuit”;当达到允许的最大流量时关闭电路。
+
+    NumStreams = 0到65535之间的值，用作可以附加在会合电路上的最大流。将其设置为0意味着无限制，这也是默认行为。
+
+    对象中的虚拟TCP端口=洋葱服务的虚拟TCP端口
+               HiddenServicePort“VIRTPORT”参数)。
+
+    Target =给定VirtPort的(可选的)目标(在可选的HiddenServicePort“Target”参数中)。
+
+    ClientName =一个1到16个字符长的标识符，只使用A-Za-z0-9+-_(没有空格)中的字符(仅使用v2)。
+
+    ClientBlob =客户端的授权数据，使用特定于授权方法的不透明格式(仅为v2)。
+
+  服务器回复格式为:
+ "250-ServiceID=" ServiceID CRLF ["250-PrivateKey=" KeyType ":" KeyBlob CRLF] "
+    *("250-ClientAuth=" ClientName ":" ClientBlob CRLF ")“250 OK”CRLF
+
+    ServiceID =不带结尾的洋葱服务地址。洋葱”后缀
+
+  告诉服务器用指定的私钥和算法创建一个新的洋葱(“隐藏”)服务。如果选择了密钥类型“NEW”，服务器将使用所选算法生成一个新的密钥对。
+  “Port”参数的VirtPort和目标值与对应的HiddenServicePort配置值具有相同的语义。
+
+  如果服务器被请求生成一个新的密钥对，并且没有指定“DiscardPK”标志，服务器响应将只包含一个私钥。(注意，如果指定了“DiscardPK”标志，就没有办法重新创建生成的密钥对和相应的洋葱
+  晚些时候的服务)。
+
+  如果使用“BasicAuth”标志(仅为v2)启用了客户端授权，那么没有有效的授权数据(使用“HidServAuth”选项配置)，客户端将无法访问服务。授权客户端列表是用一个或多个“ClientAuth”参数指定的。
+  如果未为客户端指定“ClientBlob”，则将随机生成并返回一个新的凭据。
+
+  Tor实例可以处于匿名隐藏服务模式，也可以处于非匿名单洋葱服务模式。同一tor实例上的所有隐藏服务都具有相同的匿名性。为了防止意外丢失匿名，Tor检查ADD_ONION的“非匿名”标志是否与当前隐藏服务匿名模式匹配。隐藏服务匿名模式使用Tor选项HiddenServiceSingleHopMode和
+  HiddenServiceNonAnonymousMode。如果这两个选项都是1，那么“非匿名”标志必须提供给ADD_ONION。如果这两个选项都是0 (Tor默认值)，则不能提供标志。
+
+  一旦创建，新的洋葱服务将保持活跃，直到
+  通过“DEL_ONION”删除洋葱服务，服务器终止，或者触发“ADD_ONION”命令的控制连接关闭。
+  通过指定“Detach”标志，可以在控制连接关闭时覆盖禁用洋葱服务。
+
+  如果需要，在删除Onion服务后，Onion服务服务器应用程序负责关闭现有的客户端连接。
+ (KeyBlob格式故意不透明，但是对于“RSA1024”键，它目前是PKCS#1的Base64编码的DER表示
+  RSAPrivateKey，删除所有新行。对于“ed25519 - v3”密钥，它是32字节的little-endian中的ed25519秘密标量和32字节的ed25519 PRF秘密连接的Base64编码。
+ [注意:ed25519 - v3格式与SUPERCOP ed25519/ref不同，后者存储32字节的ed25519哈希种子与32字节的公钥的连接，并通过扩展哈希种子来派生秘密标量和PRF秘密
+  sha - 512。我们的密钥盲方案与将私钥存储为种子不兼容，因此我们将秘密标量存储在
+  在导入ED25519-V3密钥时，只需支付重新计算公钥的成本。
+
+  例子:
+
+     C: ADD_ONION NEW:BEST Flags=DiscardPK Port=80
+     年代:250 - serviceid = exampleoniont2pqglbny66wpovyvao3ylc23eileodtevc4b75ikpad
+     年代:250好了
+
+     C: ADD_ONION RSA1024:[Blob编校]Port=80,192.168.1.1:8080
+     年代:250 - serviceid = sampleonion12456
+     年代:250好了
+
+     C: ADD_ONION NEW:BEST Port=22 Port=80,8080
+     年代:250 - serviceid = sampleonion4t2pqglbny66wpovyvao3ylc23eileodtevc4b75ikpad
+     年代:250 - privatekey = ED25519-V3: (Blob修订)
+     年代:250好了
+
+     C: ADD_ONION NEW:RSA1024 Flags=DiscardPK,BasicAuth端口=22
+        爱丽丝ClientAuth = (Blob修订):ClientAuth =鲍勃
+     年代:250 - serviceid = testonion1234567
+     年代:250 - clientauth =鲍勃:(Blob修订)
+     年代:250好了
+
+  匿名洋葱服务模式下的Tor示例:
+
+     C: ADD_ONION NEW:BEST Flags=DiscardPK端口=22
+     年代:250 - serviceid = exampleoniont2pqglbny66wpovyvao3ylc23eileodtevc4b75ikpad
+     年代:250好了
+
+     C: ADD_ONION NEW:BEST Flags=DiscardPK，非匿名端口=22
+     512 Tor处于匿名隐藏服务模式
+
+  在非匿名洋葱服务模式下使用Tor的例子:
+
+     C: ADD_ONION NEW:BEST Flags=DiscardPK端口=22
+     512 Tor处于非匿名隐藏服务模式
+
+     C: ADD_ONION NEW:BEST Flags=DiscardPK，非匿名端口=22
+     年代:250 - serviceid = exampleoniont2pqglbny66wpovyvao3ylc23eileodtevc4b75ikpad
+     年代:250好了
+ 在Tor 0.2.7.1-alpha中添加了ADD_ONION。[在Tor 0.2.9.1-alpha中添加了MaxStreams和MaxStreamsCloseCircuit]它只是v2。[在Tor 0.2.9.3-alpha中添加了NonAnonymous。][HS v3支持增加了0.3.3.1-alpha]
+
+3.28。DEL_ONION
+
+  的语法是:
+ "DEL_ONION" SP ServiceID CRLF
+
+    ServiceID =不带结尾的洋葱服务地址。洋葱”后缀
+
+  告诉服务器删除一个洋葱(“隐藏”)服务，该服务之前是通过“ADD_ONION”命令创建的。只能删除在与“DEL_ONION”命令相同的控制连接上创建的洋葱服务，特别是那些不属于任何控制连接的服务(“Detach”标志在创建时指定)。
+
+  如果ServiceID无效，或者不是由当前控制连接或分离的洋葱服务拥有，服务器将返回552。
+
+  如果需要，在通过“DEL_ONION”删除了Onion服务之后，Onion服务服务器应用程序负责关闭现有的客户端连接。
+
+  如果成功，Tor将返回“250 OK”，如果存在无效的参数数，则返回512，如果不能识别ServiceID，则返回552。
+ 在Tor 0.2.7.1-alpha中添加了DEL_ONION。[HS v3支持增加了0.3.3.1-alpha]
+
+3.29。HSPOST
+
+  的语法是:
+ "+HSPOST" *[SP "SERVER=" SERVER] [SP "HSADDRESS=" HSADDRESS]
+              CRLF的描述。"CRLF
+
+    服务器= LongName
+    HSAddress = 56 * Base32Character
+    描述符=格式化为rend-spec.txt章节1.3中指定的描述符的文本。
+
+  “HSAddress”键是可选的，只适用于v3描述符。如果与v2一起使用，将返回一个513错误。
+
+  此命令启动一个隐藏的服务描述符上载到指定的
+  HSDirs。如果提供了一个或多个服务器参数，则在每个服务器上并行触发上传。如果没有提供服务器选项，它的行为就像一个普通的HS描述符上传，并将上传到负责的集合
+  商品目录。
+
+  如果有任何值无法识别，则返回552错误并停止命令。如果在解析描述符时出现错误，服务器必须发送一个“554无效描述符”应答。
+
+  如果成功，Tor将回复“250 OK”，那么Tor最终必须在此之后执行一个HS_DESC事件，以获得每个上传位置的结果。
+
+  例子有:
+
+     C: +HSPOST SERVER=9695DFC35FFEB861329B9F1AB04C46397020CE31[描述符]。
+     年代:250好了
+ [HSPOST添加到Tor 0.2.7.1-alpha中]
+
+3.30。ONION_CLIENT_AUTH_ADD
+
+  的语法是:
+ SP HSAddress“ONION_CLIENT_AUTH_ADD”
+                            PrivateKeyBlob [SP "ClientName="昵称][SP "Flags=" TYPE] CRLF
+
+    HSAddress = 56 * Base32Character
+    KeyType = "x25519"是目前唯一支持的一个
+    PrivateKeyBlob = base64编码的x25519密钥
+
+  告诉连接的Tor使用“HSAddress”为onion服务添加客户端v3客户端身份验证凭证。“PrivateKeyBlob”是该客户机应该使用的x25519私钥，而“昵称”是该客户机的可选昵称。
+
+  标志是这个新客户端用逗号分隔的标志元组。目前，目前支持的标志是:
+ “Permanent”—该客户端的凭据应该存储在文件系统中。
+                  如果没有设置，客户机的凭据是epheremal的，并存储在内存中。
+
+  如果此服务的客户端身份验证凭据已经存在，则将其替换为新的凭据。
+
+  如果Tor缓存了过去无法解密的洋葱服务描述符(由于缺少客户端认证凭证)，则在此命令成功后尝试解密这些描述符。
+
+  成功后，返回“250 OK”。否则，存在以下错误码:
+
+    251 -这个洋葱服务的客户端认证证书已经存在并被替换。
+    增加客户端认证凭证并成功解密缓存的描述符。
+    512 -“HSAddress”、“PrivateKeyBlob”或“昵称”语法错误
+    客户端与此“昵称”已经存在
+    无法识别的密钥类型
+ [ONION_CLIENT_AUTH_ADD添加到Tor 0.4.3.1-alpha中]
+
+3.31。ONION_CLIENT_AUTH_REMOVE
+
+  的语法是:
+ SP HSAddress“ONION_CLIENT_AUTH_REMOVE”
+
+   KeyType = "x25519"是目前唯一支持的一个
+
+  告诉连接的Tor用“HSAddress”删除洋葱服务的客户端v3客户端身份验证凭据。
+
+  成功返回“250 OK”。否则，存在以下错误码:
+
+    512 -“HSAddress”语法错误。
+    251 -“HSAddress”的客户端凭据不存在。
+ [在Tor 0.4.3.1-alpha中添加了ONION_CLIENT_AUTH_REMOVE]
+
+3.32。ONION_CLIENT_AUTH_VIEW
+
+  的语法是:
+ "ONION_CLIENT_AUTH_VIEW" [SP HSAddress] CRLF
+
+  告诉连接的Tor列出为“HSAddress”存储的所有客户端v3客户端身份验证凭据。如果没有提供“HSAddress”，请列出存储的所有客户端v3客户机身份验证凭据。
+
+  服务器回复格式为:
+ "250-ONION_CLIENT_AUTH_VIEW" [SP HSAddress] CRLF
+    *("250-CLIENT" SP HSAddress SP KeyType ":" PrivateKeyBlob [SP "ClientName="昵称][SP "Flags=" Flags] CRLF)“250 OK”CRLF
+
+    HSAddress =存储此凭据的洋葱地址
+    KeyType = "x25519"是目前唯一支持的一个
+    PrivateKeyBlob = base64编码的x25519密钥
+ “昵称”是此客户机的一个可选昵称，可以通过ONION_CLIENT_AUTH_ADD命令设置，或者它是此客户机的文件名(如果凭据存储在文件系统中)。
+
+  FLAGS是一个逗号分隔的字段，用于这个客户端，当前支持的标志是:
+ “Permanent”—此客户机的凭据存储在文件系统中。
+
+  成功返回“250 OK”。否则，存在以下错误码:
+
+    512 -“HSAddress”语法错误。
+ [在Tor 0.4.3.1-alpha中添加了ONION_CLIENT_AUTH_VIEW]
+
+3.33。DROPOWNERSHIP
+
+  的语法是:
+ “DROPOWNERSHIP CRLF
+
+  此命令指示Tor放弃其控制连接的所有权。因此，当此控制连接关闭时，tor将不会关闭。
+
+  这种方法是幂等的。如果控制连接还没有所有权，此方法将成功返回，并且不执行任何操作。
+
+  控制人可以再次调用TAKEOWNERSHIP来重新建立所有权。
+ [在Tor 0.4.0.0-alpha中加入dropowpartnership]
+
+3.34。DROPTIMEOUTS
+
+  语法是:“DROPTIMEOUTS”CRLF
+
+  告诉服务器放下所有电路构建时间。不要轻易使用这一命令;随着时间的推移，它会增加跟踪攻击的脆弱性。
+
+  Tor成功回复“250 OK”。Tor还会发出BUILDTIMEOUT_SET
+  在此“250 OK”之后立即重置事件。
+ [在Tor 0.4.5.0-alpha中添加了DROPTIMEOUTS。]
+
+4. 回复
+
+  回复代码遵循与SMTP使用的相同的3个字符格式，第一个字符定义状态，第二个字符定义子系统，第三个字符指定细粒度信息。
+
+  TC协议目前使用以下第一个字符:
+
+    2yz积极完成回复
+       命令成功了;可以启动一个新的请求。
+
+    4yz临时否定完成回复
+       该命令不成功，但可能稍后重试。
+
+    5yz永久否定完井回复
+       命令不成功;客户端不应该再次尝试完全相同的命令序列。
+
+    6 yz异步回复
+       为响应先前的SETEVENTS命令而无序发送。
+
+  使用的第二个字符如下:
+ x0z语法
+       作为对错误的或荒谬的命令的反应而发送的。
+ x1z协议
+       指Tor控制协议的操作。
+ x5z Tor
+       指Tor系统的实际操作。
+
+  以下代码的定义:
+
+     250好了
+     251手术是不必要的[Tor已经拒绝执行手术，但没有造成伤害。]
+
+     451年资源耗尽
+
+     语法错误:协议
+
+     510年未识别的命令
+     511年未执行的命令
+     命令参数语法错误
+     无法识别的命令参数
+     514年认证要求
+     515坏认证
+
+     550未指定的Tor错误
+
+     551内部错误[Tor内部出了问题，导致客户的请求不能被满足]
+
+     不被识别的实体[配置键，流ID，电路ID，事件，在命令中提到实际上不存在。]
+
+     配置值无效[客户端试图将配置选项设置为不正确的、格式不正确的或不可能的值。]
+
+     554无效的描述符
+
+     555年非托管实体
+
+     650异步事件通知
+
+  除非指定了特定的内容，否则不应该依赖错误回复中的人类可读消息来匹配此文档中的消息。
+
+4.1。异步事件
+
+  这些响应可以在收到相应的SETEVENTS命令之后发送。它们不会与其他应答元素交织在一起，但是它们可以出现在命令和相应的应答之间。例如，这个序列是可能的:
+
+     C: setevent保监会
+     年代:250好了
+     C:拿到袜子就行了
+     大约公元650年，moria1,moria2
+     年代:250 - socksport = 9050
+     年代:250 ORPORT = 0
+
+  但是这个顺序是不允许的:
+
+     C: setevent保监会
+     年代:250好了
+     C:拿到袜子就行了
+     年代:250 - socksport = 9050
+     大约公元650年，moria1,moria2
+     年代:250 ORPORT = 0
+
+  客户端在一个异步应答中必须容忍比预期更多的参数，并且必须容忍一个异步应答中比预期更多的行。例如，客户端期望收到如下的CIRC消息:
+
+      大约公元650年，莫里亚，莫里亚
+ 必须容忍:
+
+      大约1000年，moria1,moria2 0xBEEF
+      650 - extramagic = 99
+      650匿名=高
+
+  如果客户端接收扩展事件(由USEFEATUERE选择)
+  Tor 0.1.2.2-alpha..Tor 0.2.1中的EXTENDED_EVENTSx，和永远在
+  Tor 0.2.2。，那么下面指定的每个事件行后面可能跟着额外的参数和额外的行。额外的行包括:
+ "650"("-"/" ")关键字["="参数
+
+  其他参数将属于该形式
+
+      SP关键字["=" (QuotedString / * NonSpDquote)]
+
+  客户端必须容忍带有无法识别的参数和关键字的事件，并且应该像处理任何无法识别的参数和关键字一样处理这些事件。
+
+  客户端不应该依赖于关键字=值参数的顺序，也不应该依赖于在现有的关键字=值参数之间没有新的关键字=值参数出现，尽管在撰写本文时(2011年6月)有些人会这样做。因此，对该协议的扩展应该只在现有关键字之后添加新的关键字，直到所有控制器都被修复为止。在某种程度上，这个“不应该”可能会变成“绝不应该”。
+
+以下4.4.1。电路状态发生了变化
+
+   的语法是:
+ [sp" HS_STATE=" HSState] [SP "REND_QUERY=" HSAddress] [SP "TIME_CREATED=" TimeCreated] [SP "SOCKS_USERNAME=" EscapedUsername] [SP "SOCKS_PASSWORD=" EscapedPassword] [SP "SOCKS_USERNAME=" EscapedPassword] [sp" HS_STATE=" HSState] [SP "REND_QUERY=" HSAddress] [SP "TIME_CREATED=" TimeCreated] [SP "SOCKS_USERNAME=" EscapedUsername] [SP "SOCKS_PASSWORD=" EscapedPassword]
+          CRLF
+
+      CircStatus = "已启动" /;将电路ID分配给“已建”的新电路/;所有跳跃完成，现在可以接受流“GUARD_WAIT”/;所有的啤酒花都完成了，等着看一看;防护较好的电路是可用的。“扩展”/;再跳一跳已完成“失败”/;电路关闭(未建成)“关闭”;电路关闭(已建成)
+
+      ("，" LongName);在Tor版本0.1.2.2-alpha到0.2.2.1-alpha的功能;VERBOSE_NAMES在0.1.2.2 alpha版本之前关闭;为:;路径= ServerID *("，" ServerID)
+
+      BuildFlag = BuildFlag *("，" BuildFlag)
+      BuildFlag = "ONEHOP_TUNNEL" / "IS_INTERNAL" / "NEED_CAPACITY" / "NEED_UPTIME"
+
+      目的= "GENERAL" / "HS_CLIENT_INTRO" / "HS_CLIENT_REND" / "HS_SERVICE_INTRO" / "HS_SERVICE_REND" / " test " / "CONTROLLER" / "MEASURE_TIMEOUT" / "HS_VANGUARDS" / "PATH_BIAS_TESTING" / "CIRCUIT_PADDING"
+
+      HSState = " hsci_connected " / "HSCI_INTRO_SENT" / "HSCI_DONE" / "HSCR_ESTABLISHED_IDLE" / "HSCR_ESTABLISHED_WAITING" / " hscr_joining " / " hssi_connected " / "HSSI_ESTABLISHED" / " hssr_connected " / " hssr_joining "
+
+      EscapedUsername = QuotedString
+      EscapedPassword = QuotedString
+
+      HSAddress = 16*Base32Character / 56*Base32Character
+      Base32Character =α/“2”“3”、“4”、“5”、“6”、“7”
+
+      TimeCreated = ISOTime2Frac
+      秒= 1 *位
+      微秒= 1 *位
+
+      原因= "NONE" / "TORPROTOCOL" / "INTERNAL" / "被请求" / "HIBERNATING" / "RESOURCELIMIT" / "CONNECTFAILED" / "OR_IDENTITY" / "OR_CONN_CLOSED" / "TIMEOUT" / " completed " / "DESTROYED" / "NOPATH" / "NOSUCHSERVICE" / "MEASUREMENT_EXPIRED"
+
+   仅当电路扩展至少一跳时提供该路径。
+
+   “BUILD_FLAGS”字段只在版本0.2.3.11-alpha及更高版本中提供。客户端必须接受上面没有列出的构建标志。
+   构建标志的定义如下:
+
+      ONEHOP_TUNNEL(一跳电路，用于隧道目录conns)
+      IS_INTERNAL(内部电路，不用于退出流)
+      NEED_CAPACITY(此电路必须只使用高容量节点)
+      NEED_UPTIME(该电路必须只使用高正常运行时间节点)
+
+   “PURPOSE”字段只在版本0.2.1.6-alpha和更高版本中提供，并且只有在启用扩展事件时才提供(参见3.19)。客户
+   必须接受以上未列出的用途。目的的定义如下:
+
+      通用(用于AP和/或目录请求流的电路)
+      HS_CLIENT_INTRO (HS客户端引入点电路)
+      HS_CLIENT_REND客户端会合电路;有美联社流)
+      HS_SERVICE_INTRO (HS服务端引入点电路)
+      服务端会合电路HS_SERVICE_REND
+      测试          ( reachability-testing电路;并没有流量)
+      控制器(由控制器构成的电路)
+      MEASURE_TIMEOUT(保留电路以查看需要多长时间)
+      使用时提前创建的电路
+                      HS先锋，后来根据需要改作用途)
+      PATH_BIAS_TESTING(用于探测我们的电路是否被攻击者故意关闭的电路)
+      电路填充(保持开放以掩盖其真正关闭时间的电路)
+
+   “HS_STATE”字段仅为隐藏服务电路提供，并且仅在版本0.2.3.11-alpha及以后版本中提供。客户端必须接受以上未列出的隐藏服务电路状态。隐藏服务电路状态定义如下:
+
+      HSCI_*(客户端引入点电路状态)
+        HSCI_CONNECTING(连接到介绍点)
+        HSCI_INTRO_SENT           ( 发送INTRODUCE1;等待IP回复)
+        HSCI_DONE(收到IP中继的回复;关闭)
+
+      HSCR_*(客户端会合点电路状态)
+        hscr_connected(正在连接或等待RP回复)
+        HSCR_ESTABLISHED_IDLE(建立RP;等待介绍)
+        HSCR_ESTABLISHED_WAITING(介绍发送给HS;等待撕裂)
+        hscr_join(连接到HS)
+
+      HSSI_*(服务端引入点电路状态)
+        HSSI_CONNECTING(连接到介绍点)
+        HSSI_ESTABLISHED(已建立的介绍点)
+
+      HSSR_*(服务侧会合点电路状态)
+        HSSR_CONNECTING(连接到客户端的rend点)
+        hssr_join(连接到客户端RP电路)
+
+   “SOCKS_USERNAME”和“SOCKS_PASSWORD”字段表示SOCKS客户机用于连接到Tor的SOCKS端口并启动该电路的凭据。连接不同用户名和/或密码的SOCKS客户机的流被隔离在单独的电路上
+   IsolateSOCKSAuth标志是活动的;(见提案171)[补充于Tor
+   0.4.3.1-alpha。)
+
+   “REND_QUERY”字段只提供给隐藏服务相关的电路，并且只在0.2.3.11-alpha和以后的版本中提供。客户
+   必须接受其他格式的隐藏服务地址。[加入Tor 0.4.3.1-alpha。]
+
+   “TIME_CREATED”字段只在版本0.2.3.11-alpha及更高版本中提供。TIME_CREATED是电路被创建或分解的时间。[加入Tor 0.4.3.1-alpha。]
+
+   “REASON”字段只针对失败和关闭的事件，并且只有在启用扩展事件时才提供(参见3.19)。客户必须接受以上未列出的原因。加入Tor 0.4.3.1-alpha。原因在tor规格中给出。三种,除了:
+
+      没有路径(没有足够的节点形成电路)
+      MEASUREMENT_EXPIRED(作为“TIMEOUT”，只是为了测量的目的，我们让电路保持打开状态，以查看需要多长时间才能完成。)
+      把一个电路关闭到一个引入点，这个引入点已经变得多余，因为与它并行的其他电路已经成功打开。
+
+   “REMOTE_REASON”字段仅在接收到DESTROY或时提供
+   截断单元格，且仅在启用扩展事件时使用。它包含遥控器给出的实际原因或关闭电路的原因。客户必须接受以上未列出的原因。原因在tor-spec.txt中列出。[加入Tor 0.4.3.1-alpha。]
+
+4.1.2。流状态改变
+
+    的语法是:
+ “650”SP“流”SP StreamID SP StreamStatus SP CircuitID SP目标[SP”原因= "原因[SP“REMOTE_REASON = "理由]][SP“源= "来源][SP”SOURCE_ADDR =“地址”:“端口][SP "目的= "目的][SP " SOCKS_USERNAME = " EscapedUsername] [SP " SOCKS_PASSWORD = " EscapedPassword] [SP " CLIENT_PROTOCOL = " ClientProtocol] [SP " NYM_EPOCH = " NymEpoch] [SP " SESSION_GROUP = " SessionGroup] [SP " ISO_FIELDS = " IsoFields]
+          CRLF
+
+      StreamStatus = "NEW" /;新请求连接“NEWRESOLVE”/;新请求解析地址“REMAP”/;地址重映射到另一个“SENTCONNECT”/;沿着“SENTRESOLVE”/电路发送连接单元发送一个解析单元沿电路“成功”/;收到回复;流建立“失败”/;流失败，无法恢复“关闭”/;溪流关闭“分离”/;从电路分离;仍然可检索"CONTROLLER_WAIT";等待控制器使用ATTACHSTREAM;在0.4.5.1-alpha(新)
+
+       Target = Target address ":"端口
+       Port =从0到65535(含65535)的整数
+       TargetAddress = Address / "(Tor_internal)"
+
+       EscapedUsername = QuotedString
+       EscapedPassword = QuotedString
+
+       ClientProtocol = "SOCKS4" / "SOCKS5" / "TRANS" / "NATD" / "DNS" / "HTTPCONNECT" / "UNKNOWN"
+
+       NymEpoch =非负整数
+       SessionGroup =一个整数
+
+       等场值=以逗号分隔的等场值列表
+
+       IsoField = "CLIENTADDR" / "CLIENTPORT" / "DESTADDR" / "DESTPORT" /流事件有效字段的名称
+
+  电路ID指定该流附加到哪个电路。如果流是独立的，则给出电路ID“0”。目标指示流要解析或连接到的地址;它可以是“(Tor_internal)”，用于由Tor程序创建的与自身对话的虚拟流。
+
+      原因= "MISC" / "RESOLVEFAILED" / "CONNECTREFUSED" / "EXITPOLICY" / "DESTROY" / "DONE" / "TIMEOUT" / "NOROUTE" / "HIBERNATING" / "INTERNAL"/ "RESOURCELIMIT" / "CONNRESET" / "TORPROTOCOL" / "NOTDIRECTORY" / "END" / "PRIVATE_ADDR"
+
+   “REASON”字段只针对失败、关闭和分离事件提供，并且只有在启用扩展事件时才提供(参见3.19)。客户必须接受以上未列出的原因。原因在tor规格中给出。三种,除了:
+
+      END(我们从流的另一端接收到RELAY_END单元格。)
+      PRIVATE_ADDR(客户端试图连接到一个私有地址，如
+                    127.0.0.1或10.0.0.1在Tor.) [XXXX文档更多。海里)
+
+   “REMOTE_REASON”字段只在接收到RELAY_END单元格时提供，并且只有在启用了扩展事件时才提供。它包含远程服务器给出的实际原因或关闭流的原因。客户必须接受以上未列出的原因。原因在tor-spec.txt中列出。
+ “REMAP”事件包括一个源，如果扩展事件被启用:
+
+      源=“缓存”/“退出”
+
+   客户端必须接受上面没有列出的来源。如果Tor客户端由于缓存的应答而决定重新映射地址，则给出“缓存”;如果我们查询的远程节点将新地址作为响应提供给我们，则给出“退出”。
+
+   如果启用了扩展事件，“SOURCE_ADDR”字段将包含在NEW和NEWRESOLVE事件中。它指出了请求连接的地址和端口，可以(例如)用来查找请求程序。
+
+      目的= "DIR_FETCH" / "DIR_UPLOAD" / "DNS_REQUEST" / "USER" / "DIRPORT_TEST"
+
+   “PURPOSE”字段仅为NEW和NEWRESOLVE事件提供，并且仅当扩展事件被启用时才提供(参见3.19)。客户必须接受以上未列出的目的。上述目的定义为:
+ “DIR_FETCH”——这个流在Tor内部生成，用于获取目录信息。DIR_UPLOAD——向目录权威上传信息的内部流。“DIRPORT_TEST”——我们使用一个流来测试我们自己的目录端口，以确保它是可访问的。“DNS_REQUEST”——用户发起的DNS请求。“USER”——这个流处理用户流量，或者它是Tor内部的，但是它不符合上面的目的之一。
+
+   “SOCKS_USERNAME”和“SOCKS_PASSWORD”字段指示SOCKS客户机用于连接到Tor的SOCKS端口并启动该流的凭据。连接不同用户名和/或密码的SOCKS客户机的流被隔离在单独的电路上
+   IsolateSOCKSAuth标志是活动的;见建议171。)
+
+   “CLIENT_PROTOCOL”字段表示客户端用于初始化此流的协议。(如果IsolateClientProtocol标志是活动的，那么用不同协议连接的客户端流被隔离在单独的电路上。)控制器必须容忍无法识别的客户端协议。
+
+   “NYM_EPOCH”字段指示当客户端启动此流时处于活动状态的nym epoch。当接收到NEWNYM信号时，历元递增。(具有不同nym epoch的流被隔离在单独的电路中。)
+
+   “SESSION_GROUP”字段指示客户端用于初始化此流的侦听器端口的会话组。默认情况下，每个侦听器端口的会话组是不同的，但是可以通过torrc中的“SessionGroup”选项覆盖侦听器。(具有不同会话组的流被隔离在单独的电路中。)
+
+   “ISO_FIELDS”字段指示为客户机用于初始化此流的侦听器端口启用流隔离的一组流事件字段。特殊值“CLIENTADDR”、“CLIENTPORT”、“DESTADDR”和“DESTPORT”，如果它们对应的命名字段不存在，则引用“SOURCE_ADDR”和的地址和端口组件
+   目标字段。
+
+4.1.3。或连接状态更改
+
+  的语法是:
+ "650" SP "ORCONN" SP (LongName / Target) SP或状态[SP "REASON="
+             [SP "NCIRCS=" NumCircuits] [SP "ID=" ConnID] CRLF
+
+    ORStatus = "新" / "已启动" / "已连接" / "失败" / "已关闭"
+ ;在Tor版本0.1.2.2-alpha到0.2.2.1-alpha的功能;VERBOSE_NAMES在版本0.1.2.2 alpha之前关闭，或者;连接如下:"650" SP "ORCONN" SP (ServerID / Target) SP或status [SP "REASON="
+                 [SP "NCIRCS=" NumCircuits] CRLF
+
+  NEW用于传入连接，而launch用于传出连接。连接意味着TLS握手已经完成(在两个方向上)。失败意味着还没有完成握手的连接正在关闭，关闭的连接用于握手的连接。
+
+  指定一个LongName或ServerID，除非它是一个新连接，在这种情况下，我们还不知道它是什么服务器，所以我们使用Address:Port。
+
+  如果启用了扩展事件(见3.19)，则提供了关闭和失败事件的可选原因和电路计数信息。
+
+      原因= "MISC" / "DONE" / "CONNECTREFUSED" / "IDENTITY" / "CONNECTRESET" / "TIMEOUT" / "NOROUTE" / "IOERROR" / "RESOURCELIMIT" / "PT_MISSING"
+
+  NumCircuits对已建立的和待定的电路进行计数。
+
+  ORStatus值如下:
+
+     NEW——我们已经接收到一个新的传入或连接，并且正在启动服务器端握手。
+     启动——我们已经启动了一个新的传出或连接，并且正在启动客户端握手。
+     已连接——OR连接已连接，握手完成。
+     失败——我们试图打开OR连接失败。
+     CLOSED——OR连接以一种不起眼的方式关闭。
+
+  关闭/失败或连接的值的原因是:
+
+     完成——OR连接已干净地关闭。
+     CONNECTREFUSED——我们在连接目标时收到econnrejected
+        或。
+     同一性——我们与OR连接，但发现它的同一性不是我们所期望的。
+     CONNECTRESET——我们从与or的连接中得到了ECONNRESET或类似的IO错误。
+     TIMEOUT——我们从与or的连接中得到了ETIMEOUT或类似的IO错误，或者因为空闲时间太长而关闭了连接。
+     NOROUTE——在连接or时出现ENOTCONN、ENETUNREACH、ENETDOWN、EHOSTUNREACH或类似错误。
+     IOERROR——在与OR的连接上出现了一些IO错误。
+     资源限制——我们没有足够的操作系统资源(文件描述符、缓冲区等)来连接OR。
+     PT_MISSING——没有可用的可插入传输。
+     MISC——由于其他原因关闭的OR连接。
+ [在0.2.5.2-alpha中首次添加ID参数]
+
+4.1.4。最后一秒使用的带宽
+
+  的语法是:
+ "650" SP "BW" SP BytesRead SP byteswrite *(SP类型"=" Num) CRLF
+     BytesRead = 1 *位
+     BytesWritten = 1 *位
+     Type = "DIR" / "或" / "EXIT" / "APP" /…
+     Num = 1 *位
+
+  BytesRead和BytesWritten是总数。[在未来的Tor版本中，我们可能还会包括在这一秒内使用带宽的连接类型的分解(尚未实现)。]
+
+4.1.5。日志消息
+
+  的语法是:
+ “650”SP严重性SP回复文本CRLF
+ 或
+ “650+”严重CRLF数据650 SP“OK”CRLF
+
+     Severity =“调试”/“信息”/“通知”/“警告”/“ERR”
+
+  一些低级日志可能由信号处理程序发送，因此它们的目标日志必须是信号安全的。这些低级日志包括回溯、日志函数错误和由日志函数调用的代码中的错误。
+  信号安全日志永远不会作为控制端口日志事件发送。
+
+  控制端口消息跟踪调试日志永远不会作为控制端口日志事件发送，以避免在调试时修改控制输出。
+
+4.1.6。新的描述符可用
+
+  当接收到新的路由器描述符(不是microdescs或extrainfos或任何其他东西)时，就会产生此事件。
+
+  语法:
+ “650”SP“NEWDESC”1*(SP LongName) CRLF;在Tor版本0.1.2.2-alpha到0.2.2.1-alpha的功能;VERBOSE_NAMES关闭，在版本0.1.2.2 alpha之前，它;是如下:“650”SP“NEWDESC”1*(SP ServerID) CRLF
+
+4.1.7。新地址映射
+
+  当输入新的地址映射时，将生成这些事件
+  Tor的地址映射缓存，或者当找到解析命令的答案时。条目可以由成功或失败的DNS查找、成功或失败的连接尝试、解析命令、MAPADDRESS命令、AutomapHostsOnResolve特性或
+  TrackHostExits特性。
+
+  语法:
+ "650" SP "ADDRMAP" SP地址SP NewAddress SP Expiry [SP "error=" ErrorCode] [SP "EXPIRES=" UTCExpiry] [SP "CACHED=" CACHED]
+       CRLF
+
+     NewAddress = Address / "<error>"
+     Expiry = DQUOTE ISOTime DQUOTE /“NEVER”
+
+     ErrorCode = "是" / "内部" / "无法启动解析请求"
+     等时间
+
+     缓存= DQUOTE "YES" DQUOTE / DQUOTE "NO" DQUOTE
+
+  只有在启用扩展事件时才提供错误和UTCExpiry。
+  错误值大多是无用的。将来的值将被选择来匹配1*(ALNUM / "_");“无法启动解析请求”的值是Tor 0.2.4.7-alpha之前的一个bug。
+
+  到期时间表示为当地时间(而不是UTC)。这是一个bug，为了向后兼容性而留下的;新代码应该使用UTCExpiry。(如果Expiry是“NEVER”，则省略UTCExpiry。)
+
+  缓存指示映射是否将被存储到它到期，或者它是否只是一个响应解析命令的通知。
+
+4.1.8。描述符以我们作为权威dirserver的角色上传到我们这里
+ [注:此功能在Tor 0.3.2.1-alpha中被删除。]
+
+  当Tor是目录权威，并且某人刚刚上传了服务器描述符时，它会生成此事件。
+
+  语法:
+ "650" "+" "AUTHDIR_NEWDESCS" CRLF动作CRLF消息CRLF
+       描述符CRLF。”CRLF "650" SP "OK" CRLF
+     Action = "接受" / "丢弃" / "拒绝"
+     文本消息=
+
+  描述符字段是服务器描述符的文本;如果我们接受描述符作为它的路由器的最佳有效描述符，则动作字段为“accept”;如果我们不接受描述符并向上传中继抱怨，则为“REJECTED”;如果我们决定毫无怨言地删除描述符，则为“drop”。Message字段是一个人类可读的字符串，解释了我们选择操作的原因。(它不包含换行。)
+
+4.1.9。我们的描述符改变
+
+  语法:
+ "650" SP "高音" CRLF
+ [在0.1.2.2 alpha中首次添加]
+
+4.1.10。状态事件
+
+  状态事件(STATUS_GENERAL、STATUS_CLIENT和STATUS_SERVER)是根据Tor进程中与程序的一般状态相关的事件发送的。通常，它们对应于严重程度通知或更高级别的日志消息。它们与日志消息的不同之处在于它们的格式是指定的接口。
+
+  语法:
+ "650" spstatustype spstatusseverity spstatusaction [spstatusarguments] CRLF
+
+     StatusType = "STATUS_GENERAL" / "STATUS_CLIENT" / "STATUS_SERVER"
+     StatusSeverity = "NOTICE" / "WARN" / "ERR"
+     StatusAction = 1 *α
+     StatusArguments = StatusArgument *(SP StatusArgument)
+     StatusArgument = StatusKeyword '=' StatusValue
+     StatusKeyword = 1*(ALNUM / "_")
+     StatusValue = 1*(ALNUM / '_') / QuotedString
+
+     StatusAction是一个字符串，而StatusArguments是同一行上的一系列关键字=值对。值可以是空格结尾的字符串，也可以是带引号的字符串。
+
+     这些事件总是由EXTENDED_EVENTS和生成
+     VERBOSE_NAMES;有关详细信息，请参阅USEFEATURE部分中的解释。
+
+     控制器必须容忍未识别的操作，必须容忍未识别的参数，必须容忍丢失的参数，必须容忍以任何顺序到达的参数。
+
+     下面的每个事件描述都附有控制器的建议。这些建议只是建议;不需要控制器来实现它们。
+
+  注意:0.2.0.22-rc之前版本的Tor错误地将“STATUS_SERVER”生成为“STATUS_SEVER”。为了与这些版本兼容，工具应该同时接受这两个版本。
+
+  STATUS_GENERAL事件的操作如下:
+
+     CLOCK_JUMPED“时间= NUM”
+       Tor在没有CPU周期的情况下花费了足够的时间，因此它关闭了所有的电路，并将重新建立它们。这通常发生在笔记本电脑进入睡眠状态，然后再次醒来的时候。这种情况也会发生在系统频繁交换导致Tor饥饿的时候。“time”参数指定了Tor认为它无意识的秒数(或者，它返回的时间秒数)。
+
+       此状态事件通常以严重性通知的形式发送，但如果Tor目前充当服务器，则会发出严重性警告。
+ {控制器的建议:忽略它，因为我们不知道用户应该怎么做。嗯。}
+
+     “原因=新的/过时的/不推荐的”“推荐的=\”版本，版本，…\”
+       Tor发现目录服务器不推荐它的Tor软件版本。推荐的是一个由逗号和空格分隔的字符串，包含推荐的Tor版本。如果此版本的Tor比任何推荐版本都新，原因是“新”;如果此版本的Tor比任何推荐版本都旧，原因是“过时”
+       如果推荐的Tor版本较新，而有些版本较旧，则不推荐使用。(从Tor 0.1.2.3-alpha到0.2.0.12-alpha，“OBSOLETE”的原因被称为“OLD”。)
+ {控制器可能想建议用户升级旧的或
+       项目版本。新版本可能被认为是不安全的，或者可能只是开发版本。
+
+     TOO_MANY_CONNECTIONS“当前= NUM "
+       Tor已经达到了它的ulimit -n或文件描述符或套接字上的本机限制。当前是插座当前已经打开的数量。用户确实应该为此做些什么。“current”参数显示当前打开的连接数。
+ {控制器可能会建议用户增加限制，或者为他们增加限制。推荐应该用an
+       操作系统适当的方式，并在可能的情况下自动实现。
+
+     错误“原因=字符串”
+       Tor遇到了它的开发人员从未预料到的情况，而开发人员很想知道这种情况的发生。也许控制器可以向用户解释这一点，并鼓励她提交错误报告?
+ {控制器应该记录错误，但不应该烦扰用户，以防错误频繁出现。}
+
+     CLOCK_SKEW
+       歪斜="+" / "-"秒
+       MIN_SKEW="+" / "-"秒数。
+       来源="DIRSERV:" IP ":" Port / "网络状态:" IP ":" Port / "或:" IP ":" Port / "CONSENSUS"
+         如果存在“偏斜”，它是对我们离源中声明的时间有多远的估计。(换句话说，如果我们在过去一小时，值是-3600)有MIN_SKEW，它是一个下界。如果源是DIRSERV，我们从一个到dirserver的连接获得当前时间。如果源是一个网络状态，我们认为我们是不正确的，因为我们从遥远的未来得到了v2网络状态。如果来源是或，歪斜来自NETINFO单元从连接到另一个继电器。如果来源是
+         共识，我们认为我们被扭曲了，因为我们从未来得到了网络状态的共识。
+ {Tor应该发送这个消息给控制器时，它认为倾斜是如此之高，它将干扰Tor的正常操作。
+         控制器不应该盲目地调整时钟，因为更准确的来源的歪斜信息(DIRSERV)目前是未经认证的。
+
+     BAD_LIBEVENT "方法=" libevent方法"版本=" libevent版本"坏值="已坏" / " bug " / "缓慢" "恢复=" "没有" / "是"
+        Tor知道在这个版本的libevent中使用配置的事件方法的bug。“坏的”libevents将无法工作;“bug”libevents可能工作正常;“慢速”libevents可以正常工作，但速度不够快。如果“恢复”是YES，那么Tor就会切换到更可靠(但可能更慢!)的libevent方法。
+ {控制器可能想要警告用户如果这个事件发生，虽然通常这是谁建立了Tor二进制的错误，没有太多的用户可以做升级libevent或升级二进制。}
+
+     DIR_ALL_UNREACHABLE
+       Tor认为所有已知的目录服务器都是不可访问的——这很可能是因为本地网络已经关闭或无法工作，这可能有助于向用户解释为什么Tor看起来是坏了。
+ {控制器可能想要警告用户如果这个事件发生;进一步的行动通常是不可能的。
+
+  STATUS_CLIENT事件的操作如下:
+
+     BOOTSTRAP "PROGRESS=" num "TAG=" Keyword "SUMMARY=" String ["WARNING=" String] ["REASON=" Keyword] ["COUNT=" num] ["RECOMMENDATION=" Keyword] ["HOST=" QuotedString] ["HOSTADDR=" QuotedString]
+
+       Tor在建立到的连接方面取得了一些进展
+       Tor网络，获取目录信息，或制作其第一个电路;或者它在引导过程中遇到了问题。此状态事件对于连接速度慢或有连接问题的用户特别有用。
+ “Progress”给出了一个介于0到100之间的数字，表示我们在引导过程中走了多远。“Summary”是一个字符串，可以显示给用户来描述Tor将要处理的*下一个*任务，也就是在发送状态事件后正在处理的任务。“Tag”是一个字符串，控制器可以使用它来识别引导阶段，如果他们想做一些更聪明的事情，而不是盲目地显示摘要字符串;有关Tor发出的当前标记，请参阅第5节。
+
+       StatusSeverity描述了这是一个正常的引导阶段(严重性通知)还是一个引导问题的指示(严重性警告)。
+
+       对于引导问题，我们包含了与正常引导事件相同的进度、标记和汇总值，但是我们还包含了“warning”、“reason”、“count”和“recommendation”键/值组合。“计数”数字表示到目前为止在这个阶段有多少bootstrap问题。“原因”字符串列出ORCONN事件中允许的原因之一。“warning”参数字符串，带有Tor必须提供的关于它在引导过程中为什么会遇到麻烦的提示。
+
+       “原因”值是长期稳定的面向控制器的标记，用于在引导步骤中识别特定问题。另一方面，警告字符串是人类可读的。控制器
+       不应依赖于任何警告字符串的格式。目前，“推荐”的可能值是“ignore”或“warn”——如果忽略，控制器就会将字符串累积成一堆问题，如果用户提出请求，就会显示给用户;如果警告，控制器应该提醒用户，Tor非常确定存在引导问题。
+
+       “host”值是我们试图连接的节点的身份摘要(十六进制);“hostaddr”是地址:端口组合，其中“address”是ipv4或ipv6地址。
+
+       目前，Tor对给定阶段的前9个引导问题报告使用recommendation=ignore，然后对该阶段的后续问题使用recommendation=warn。希望这能在容忍偶尔的错误和快速报告严重问题之间取得良好的平衡。
+
+     ENOUGH_DIR_INFO
+       Tor现在知道了足够多的网络状态文档和足够多的服务器描述符，它现在就要开始尝试构建电路了。[较新的Tor版本(0.2.6.2 alpha及更高版本):
+       如果共识包含出口(典型的情况)，Tor将建立出口和内部电路。如果不是，Tor将只构建内部电路。
+ {控制器可能想要使用这个事件来决定何时向他们的用户指示进度，但不应该中断用户的浏览来告诉他们。
+
+     NOT_ENOUGH_DIR_INFO
+       我们丢弃了过期的状态和服务器描述符，使其低于期望的目录信息阈值。在ENOUGH_DIR_INFO再次出现之前，我们不会尝试构建任何电路。
+ {控制器可能想要使用这个事件来决定何时向他们的用户指示进度，但不应该中断用户的浏览来告诉他们。
+
+     CIRCUIT_ESTABLISHED
+       Tor能够建立供客户使用的电路。只有当我们建立了一个改变主意的电路时，这个事件才会被发送——也就是说，在这个事件之前，我们不知道是否可以建立电路。
+ {建议的用途:控制器可以通知他们的用户，一旦他们看到这个状态事件，Tor已经准备好作为客户端使用。[也许控制器也应该有一个超时，如果过了太多的时间，这个事件还没有到达，给如何故障排除提示。
+       另一方面，如果Tor能够识别出问题，则它可能会发送进一步的状态事件。
+
+     " CIRCUIT_NOT_ESTABLISHED " "EXTERNAL_ADDRESS" / "DIR_ALL_UNREACHABLE" / " clock_jump "
+       我们不再有信心建造电路。“reason”关键字提供了一个解释:是哪个状态事件类型导致了我们缺乏信心。
+ {控制器可能想要使用这个事件来决定何时向他们的用户指示进度，但不应该中断用户的浏览来这样做。}[注意:唯一的原因= clock_jump是当前实现的。]
+
+     CONSENSUS_ARRIVED
+        Tor已经接收并验证了一个新的共识网络状态。(如果Tor需要获取证书，此事件可以在接收到共识后延迟一段时间。)
+
+     DANGEROUS_PORT "PORT=" PORT "RESULT=" REJECT" / "WARN"
+       流被初始化到一个端口，该端口通常用于漏洞-明文协议。如果结果是“reject”，则拒绝连接;而如果是警告，我们就允许了。
+ {控制器应该在发生这种情况时警告用户，除非他们碰巧知道使用Tor的应用程序实际上是正确的(例如，因为它是一个分布式捆绑包的一部分)。他们可能还需要一些接口，让用户配置他们的RejectPlaintextPorts和WarnPlaintextPorts配置选项。
+
+     协议=" "SOCKS4" / "SOCKS5" "地址=" IP:端口
+       使用一种不支持主机名(只支持原始IP地址)的SOCKS方法建立到Tor的SOCKS端口的连接。
+       如果客户端应用程序从gethostbyname()获得该地址，它可能通过DNS泄漏目标地址。
+ {控制器应该在发生这种情况时向用户发出警告，除非他们恰好知道使用Tor的应用程序实际上这样做是正确的(例如，因为它是一个分布式包的一部分)。
+
+     SOCKS_UNKNOWN_PROTOCOL“DATA =字符串”
+       一个连接被建立到Tor的SOCKS端口，该端口试图将其用于SOCKS协议之外的其他东西。也许用户正在使用Tor作为HTTP代理?数据是在SOCKS端口上发送到Tor的前几个字符。
+ {控制器可能想要警告他们的用户当这发生:它表明一个错误配置的应用程序。}
+
+     SOCKS_BAD_HOSTNAME“主机名= QuotedString”
+       一些应用程序给了我们一个看起来很滑稽的主机名。也许它坏了?在任何情况下，它不会与Tor工作，用户应该知道。
+ {控制器可能想要警告他们的用户当这发生:它通常表示一个错误配置的应用程序。}
+
+  STATUS_SERVER的操作如下:
+
+     方法=已配置/CONFIGURED_ORPORT/DIRSERV/ resolve /
+             接口/ GETHOSTNAME”
+       我们对外部可见IP的最好想法变成了“IP”。如果存在'HOSTNAME'，我们通过解析'NAME'得到新的IP。如果方法被“配置”，IP将被逐字地作为地址配置选项提供。如果方法是'CONFIGURED_ORPORT'， IP将在ORPort配置选项中逐字给出。如果方法被“解析”，我们解析地址配置选项以获得IP。
+       如果方法是'GETHOSTNAME'，则解析主机名以获得IP。
+       如果方法是'INTERFACE'，我们将获得其中一个网络接口的地址以获得IP。如果方法是'DIRSERV'，一个目录服务器会告诉我们我们的IP可能是什么。
+ {控制器可能想要记录这个信息并显示给用户
+
+     CHECKING_REACHABILITY“ORADDRESS = IP:港口”“DIRADDRESS = IP:港口”
+       我们将开始测试外部端口或目录端口的可访问性。
+ {此事件可能会影响控制器对服务器状态的想法，但控制器不应该中断用户来告诉他们。}
+
+     REACHABILITY_SUCCEEDED“ORADDRESS = IP:港口”“DIRADDRESS = IP:港口”
+       我们成功地验证了外部端口或目录端口的可达性(取决于给定的是哪个或地址或DIRADDRESS)。
+ {此事件可能会影响控制器对服务器状态的想法，但控制器不应该中断用户来告诉他们。}
+
+     GOOD_SERVER_DESCRIPTOR
+       我们成功地将服务器描述符上载到至少一个目录权威机构，没有任何抱怨。
+ {最初，这个事件的目标是宣布“每个权威机构都接受了描述符，因此不会有任何抱怨。”但由于一些当局可能已经离线，因此要获得确定性比我们想象的要困难得多。因此，这个事件相当于下面的ACCEPTED_SERVER_DESCRIPTOR。控制器应该只查看ACCEPTED_SERVER_DESCRIPTOR，现在应该忽略这个事件。
+
+     SERVER_DESCRIPTOR_STATUS "STATUS="已列出" / "未列出"
+       我们刚刚达成了一个新的网络状态共识，无论我们是否参与其中，它都发生了变化。具体来说，如果我们被列在名单上，就会被“列出来”，但在此之前，我们不知道我们被列出来是一致的;如果我们认为自己应该被列在列表中(例如，我们被列在了最后一个列表中)，那么状态就是“未被列出来的”，但我们没有。
+ {从上市到未上市并不一定会引起恐慌。中继可能失败了一些可达性测试，或者Internet可能有一些路由问题。所以这个特性主要是让继电器操作员知道他们的继电器什么时候已经成功地列在共识中。
+ (没有实现。我们应该用0。2。x来做。rd)
+
+     名称ver_status "NS=addr" "STATUS=" "向上" / "向下" "ERR="消息
+        我们的一个同名者改变了身份。
+ {此事件可能会影响控制器对服务器状态的想法，但控制器不应该中断用户来告诉他们。}
+
+     NAMESERVER_ALL_DOWN
+        所有与我们同名的人都破产了。
+ {这是个问题;如果它经常发生而没有名称服务器再次出现，用户需要配置更多或更好的名称服务器。
+
+     DNS_HIJACKED
+        我们的DNS提供商提供了一个地址，而它应该说“NOTFOUND”;Tor将把地址作为“NOTFOUND”的同义词处理。
+ {这是一个烦恼;控制器可能想告诉管理员他们的
+        DNS提供商不值得信任。}
+
+     DNS_USELESS
+        我们的DNS提供商提供的是一个被劫持的地址，而不是知名网站;Tor不会尝试成为退出节点。
+ 如果中继作为退出节点运行，控制器可以警告管理员:管理员需要配置一个好的DNS服务器。
+        另外，当用户没有注册时，这种情况经常发生在一些受限的环境中(酒店、大学、咖啡馆)。
+
+     BAD_SERVER_DESCRIPTOR“DIRAUTH = addr:港口”“原因=字符串”
+        目录权威拒绝了我们的描述符。可能的原因包括畸形的描述符、不正确的键、高度扭曲的时钟等等。
+ {控制人员应该警告管理人员，并尝试处理如果他们可以。}
+
+     ACCEPTED_SERVER_DESCRIPTOR“DIRAUTH = addr:港口”
+        一个目录权威机构接受了我们的描述符。/ /实际通知
+ {此事件可能会影响控制器对服务器状态的想法，但控制器不应该中断用户来告诉他们。}
+
+     REACHABILITY_FAILED“ORADDRESS = IP:港口”“DIRADDRESS = IP:港口”
+       我们未能成功连接到外部端口或目录端口。
+ {此事件可能会影响控制器对服务器状态的想法。控制人应当向管理方提出警告，并建议采取合理的措施。
+
+     HIBERNATION_STATUS“STATUS”=“AWAKE”|“SOFT”|“HARD”
+       我们的基于带宽的会计状况已经改变，我们现在中继流量/拒绝新连接/休眠。
+ {此事件可能会影响控制器对服务器状态的想法。控制器可能会通知管理员，尽管会计被显式启用是有原因的。
+ [此事件添加到tor 0.2.9.0-alpha中]
+
+4.1.11。我们的保护节点集已经改变
+
+  语法:
+ "650" SP "守卫" SP类型SP名称SP状态…CRLF
+     Type = "入口"
+     Name = ServerSpec(标识受影响的防护)
+     状态=“新”|“向上”|“向下”|“坏”|“好”|“下降”
+
+  入口类型表示用于连接到Tor网络的保护。
+
+  状态值为:
+ “NEW”——此节点以前不用作守卫;现在我们把它选为1。“drop”——这个节点是我们之前选作守卫的节点;我们不再认为它是我们的警卫名单中的一员。“向上”——现在似乎可以联系到警卫了。“向下”——警卫现在似乎遥不可及。“BAD”——由于在consensus和/或配置中的值中设置了标志，这个节点现在不能用作守卫。“好”——由于在consensus和/或配置中的值中设置了标志，这个节点现在可以用作守卫。
+
+  控制器必须接受无法识别的类型和无法识别的状态。
+
+4.1.12。网络状态已经改变
+
+  语法:
+ "650" "+" NS" CRLF 1*网络状态"。CRLF "650" SP "OK" CRLF
+
+  只要中继状态的本地视图发生更改，就会使用该事件。
+  这一切发生的时候,当我们得到一个新的v3共识(在这种情况下,我们看到的是一个条目复制NEWCONSENSUS事件中,我们看到的下面),但它也当我们决定中继标记为向上或向下在我们当地的地位,例如基于连接尝试。
+ [首次在0.1.2.3-alpha中添加]
+
+4.1.13。应用程序流上使用的带宽
+
+  的语法是:
+ “650”SP“STREAM_BW”SP StreamID SP BytesWritten SP BytesRead SP
+              时间CRLF
+     BytesWritten = 1 *位
+     BytesRead = 1 *位
+     时间= ISOTime2Frac
+
+  byteswrite和BytesRead是自流上最后一个STREAM_BW事件以来应用程序写入和读取的字节数。
+
+  注意，从Tor的角度来看，在流上*读取*字节意味着应用程序*写了*字节。这就是为什么stream_bw事件的“写入”和“读取”顺序与bw事件相反。
+
+  时间字段只在版本0.3.2.1-alpha及更高版本中提供。它记录Tor创建带宽事件的时间。
+
+  这些事件每一个流大约每秒生成一次;没有为未写或未读的流生成事件。这些事件仅适用于进入Tor的流(例如SOCKSPort、TransPort等)。它们不是为退出流生成的。
+
+4.1.14。每个国家的客户数据
+
+  的语法是:
+ "650" CLIENTS_SEEN" SP时间启动SP CountrySummary SP
+     IPVersions CRLF
+
+  我们刚刚生成了一份关于最近我们的客户来自哪些国家的总结。控制器可以显示给用户，例如在他们的“relay”配置窗口，给他们一种感觉，他们实际上是有用的。
+
+  目前只有桥接中继会接收这个事件，但是一旦我们弄清楚如何在主中继上充分聚集和清理客户端，我们可能会开始在其他情况下发送这些事件。
+
+  TimeStarted是一个带引号的字符串，指示所报告的摘要从何时开始计数(用utc表示)。
+
+  CountrySummary关键字的参数是逗号分隔的，可能是空的“countrycode=count”对集。例如(没有换行符)，
+  650 - clients_seen TimeStarted = " 2008-12-25 23:50:43 "
+  德= 8 CountrySummary =我们= 16日,英国= 8
+
+  IPVersions关键字的参数是逗号分隔的一组“protocol-family=count”对。例如,
+  v6 IPVersions = v4 = 16日= 40
+
+  注意，这些值是四舍五入的，而不是精确的。舍入算法在dir-spec.txt中的“geoip-client-origin”描述中指定。
+
+4.1.15。新的舆论网络状态已经到来
+
+  的语法是:
+ "650" "+" "新共识" CRLF 1*网络状态"。CRLF "650" SP "OK" CRLF
+
+  一种新的共识网络状态已经到来。我们在共识中为每一个继电器包括ns型线。新共识是一个独立的事件
+  NS事件，因为这里的列表表示每个可用的中继:所以任何中继*没有*在这个列表中被隐式地不再推荐。
+ [首次在0.2.1.13 alpha中添加]
+
+4.1.16。新的电路构建时间已经设置
+
+  的语法是:
+ "650" SP "BUILDTIMEOUT_SET" SP类型SP "TOTAL_TIMES=" Total SP "TIMEOUT_MS=" Timeout SP "XM=" XM SP "ALPHA=" ALPHA SP "CUTOFF_QUANTILE=" Quantile SP "TIMEOUT_RATE=" timeoutate SP "CLOSE_MS=" CloseTimeout SP "CLOSE_RATE=" close serate
+        CRLF
+     Type = "COMPUTED" / "RESET" / "SUSPENDED" / "丢弃" / "RESUME"
+     Total =存储的超时的整数计数
+     超时=整数超时(毫秒)
+     Xm =估计整数帕累托参数Xm(毫秒)
+     =估计的浮点参数
+     分位数=此超时的浮点CDF分位数截止点
+     超时=超时电路的浮点比率
+     关闭超时=保持测量电路的时间(毫秒)
+     闭合的测量电路的浮点比率
+
+  设置了新的电路构建超时时间。如果类型为“COMPUTED”，
+  Tor根据历史数据计算了该值。如果类型是“RESET”，初始化或剧烈的网络变化已经导致Tor将超时重置为默认值，重新学习。如果类型是“SUSPENDED”，Tor已经检测到网络连接丢失，并临时将超时值更改为默认值，直到网络恢复。如果类型是“丢弃”，那么Tor决定丢弃网络宕机时可能发生的超时值。如果类型是“RESUME”，Tor决定恢复超时计算。
+
+  总值是计算该值所用的电路构建时间的计数。它在内部的上限是Tor存储的构建时间的最大数量(ncircuit its_to_observe)。
+
+  超时本身以毫秒为单位。在内部，Tor在使用该值之前将该值四舍五入到最近的秒。
+ [首次在0.2.2.7-alpha中添加]
+
+4.1.17。信号接收
+
+  的语法是:
+ "650" SP "信号" SP信号CRLF
+
+     Signal =“RELOAD”/“DUMP”/“DEBUG”/“NEWNYM”/“CLEARDNSCACHE”
+
+  Tor接收到一个信号并采取了行动。每个信号的含义以及到Unix信号的映射在第3.7节中定义。
+  Tor的未来版本可能会产生这里列出的信号以外的信号;控制器必须能够接受它们。
+
+  如果Tor选择忽略一个信号(如NEWNYM)，则不会发送此事件。注意，有些选项(如ReloadTorrcOnSIGHUP)可能会影响这里信号的语义。
+
+  注意，HALT (SIGTERM)和SHUTDOWN (SIGINT)信号当前不生成任何事件。
+ [首次在0.2.3.1-alpha中添加]
+
+4.1.18。配置更改
+
+  的语法是:
+
+     EndReplyLine StartReplyLine * (MidReplyLine)
+
+     StartReplyLine = "650-CONF_CHANGED" CRLF
+     关键字["="值]CRLF
+     EndReplyLine =“650 OK”
+
+  Tor配置选项已经改变(例如通过SETCONF或RELOAD信号)。关键字和值指定已更改的配置选项。
+  未定义的配置选项只包含关键字。
+
+4.1.19。电路状态略有改变
+
+  的语法是:
+ [SP "HS_STATE=" HSState] [SP "HS_STATE] [SP "REND_QUERY=" HSAddress] [SP "TIME_CREATED=" TimeCreated] [SP "OLD_PURPOSE=" PURPOSE [SP "OLD_HS_STATE=" HSState]
+
+    CircEvent = "PURPOSE_CHANGED" /;电路用途或与hs相关的状态改变“相残”;电路蚕食
+
+  客户端必须接受上面没有列出的电路事件。
+
+  “OLD_PURPOSE”字段同时为PURPOSE_CHANGED和
+  肢解事件。每当提供“OLD_PURPOSE”字段时，都会提供“OLD_HS_STATE”字段，并且该字段是与隐藏服务相关的目的。
+
+  其他字段如上文第4.1.1节所述。
+ [首次在0.2.3.11-alpha中添加]
+
+4.1.20。可插拔的运输了
+
+  的语法是:
+ "650" SP " transport_launch " SP类型SP名称SP TransportAddress SP端口
+    Type = "server" | "client"
+    Name =可插拔传输的名称
+    TransportAddress =可插拔传输侦听连接的IPv4或IPv6地址
+    端口=正在侦听连接的TCP端口。
+
+    一个名为“Name”类型为“type”的可插拔传输已成功启动，现在正在监听“Address”:“Port”上的连接。
+
+4.1.21。在或DIR或退出连接上使用的带宽
+
+  的语法是:
+ "650" SP "CONN_BW" SP "ID=" ConnID SP "TYPE=" ConnType
+              " BytesRead SP " " write =" BytesWritten CRLF "
+
+     ConnType = "OR" /;在tor网络中承载流量。这可以是我们自己的(客户机)通信量，也可以是我们在网络中中继的通信量。“DIR”/;获取描述符数据，或者传输我们正在镜像的描述符。“退出”;在tor网络和外部目的地之间传输流量。
+
+     BytesRead = 1 *位
+     BytesWritten = 1 *位
+
+  控制器必须容忍无法识别的连接类型。
+
+  byteswrite和BytesRead是自上次CONN_BW事件以来Tor在此连接上写入和读取的字节数。
+
+  这些事件在每个连接中大约每秒生成一次;没有为未读或未写的连接生成事件。
+  只有在设置了TestingTorNetwork时才会生成这些事件。
+ [首次在0.2.5.2-alpha中添加]
+
+4.1.22。连接到电路上的所有流所使用的带宽
+
+  的语法是:
+ "650" SP "CIRC_BW" SP "ID="循环SP "READ=" BytesRead SP " write =" BytesWritten SP "TIME=" TIME SP "DELIVERED_READ=" DeliveredBytesRead SP "OVERHEAD_READ=" overedbytesread SP " delivered_write =" DeliveredBytesWritten CRLF " overhead_write =" OverheadBytesWritten SP
+     BytesRead = 1 *位
+     BytesWritten = 1 *位
+     OverheadBytesRead = 1 *位
+     OverheadBytesWritten = 1 *位
+     DeliveredBytesRead = 1 *位
+     DeliveredBytesWritten = 1 *位
+     时间= ISOTime2Frac
+
+  BytesRead和byteswrite是自上一个CIRC_BW事件以来在该电路上读取和写入的字节数。这些字节不一定经过Tor验证，可以包括无效单元格、被丢弃的单元格和被忽略的单元格(例如填充单元格)。这些值包括中继标头，但不包括电路标头。
+
+  被Tor验证和处理的电路数据进一步分解为两类:交付的有效载荷和开销。
+  DeliveredBytesRead和DeliveredBytesWritten是自上一个CIRC_BW事件以来传输的总中继单元有效负载，不计算中继单元标头或电路标头。OverheadBytesRead和
+  overheadbyteswrite是每个单元末尾额外的未使用字节，以使其成为固定的CELL_LEN字节长。
+
+  DeliveredBytesRead和OverheadBytesRead的总和必须小于
+  BytesRead，对于它们的书面对应项也是如此。此总和表示电路中已被Tor验证的中继单元字节总数，不包括中继头和单元头。
+  从BytesRead(或byteswrite)值中减去这个总和(加上中继单元标头)，就得到了Tor由于协议错误而决定拒绝或决定忽略的字节数。
+
+  时间字段只在版本0.3.2.1-alpha及更高版本中提供。它记录Tor创建带宽事件的时间。
+
+  这些事件在每个电路中大约每秒产生一次;没有附加流写入或读取的电路不会生成事件。
+ [首次在0.2.5.2-alpha中添加]
+ [在Tor 0.3.4.0-alpha中添加DELIVERED_READ、OVERHEAD_READ、DELIVERED_WRITTEN和OVERHEAD_WRITTEN]
+
+4.1.23。系统单元格数据
+
+  的语法是:
+ “650”SP“CELL_STATS”[SP " ID = " CircuitID] [SP " InboundQueue = " QueueID SP " InboundConn = " ConnID] [SP " InboundAdded = " CellsByType] [SP " InboundRemoved = " CellsByType SP " InboundTime = " MsecByType] [SP " OutboundQueue = " QueueID SP " OutboundConn = " ConnID] [SP " OutboundAdded = " CellsByType] [SP " OutboundRemoved = " CellsByType SP " OutboundTime = " MsecByType] CRLF
+     CellsByType, MsecByType = CellType ":" 1*DIGIT
+                               0*("，" CellType ":" 1*DIGIT ")
+     CellType = 1*("a" - "z" / "0" - "9" / "_")
+
+  例子有:
+
+     650 CELL_STATS ID=14 OutboundQueue=19403 OutboundConn=15
+         OutboundAdded = create_fast: 1, relay_early: 2
+         OutboundRemoved = create_fast: 1, relay_early: 2
+         OutboundTime = create_fast: 0, relay_early: 0
+     650 CELL_STATS InboundQueue=19403 InboundConn=32
+         InboundAdded =继电器:1,created_fast: 1
+         InboundRemoved =继电器:1,created_fast: 1
+         InboundTime =继电器:0,created_fast: 0
+         OutboundQueue = 6710 OutboundConn = 18
+         OutboundAdded =创建:1,relay_early: 1
+         OutboundRemoved =创建:1,relay_early: 1
+         OutboundTime =创建:0,relay_early: 0
+
+  ID是本地唯一的电路标识符，仅当电路起源于此节点时才包含。
+
+  入站和出站指的是细胞流经电路的方向，要么到起点(入站)，要么从起点(出站)。
+
+  InboundQueue和OutboundQueue是该电路的入站和出站电路队列的标识符。这些标识符仅对每个连接是唯一的。OutboundQueue由该节点选择并匹配电路中下一个节点的InboundQueue。
+
+  InboundConn和OutboundConn是入站和出站或连接的本地惟一id。OutboundConn不一定匹配
+  电路中下一个节点的InboundConn。
+
+  如果电路起源于此节点，则InboundQueue和InboundConn不存在。如果电路(当前)在此节点结束，则OutboundQueue和OutboundConn不存在。
+
+  InboundAdded和OutboundAdded是按单元格类型添加到入站和出站队列的单元格总数。只有在至少有一个单元添加到队列时才出现。
+
+  InboundRemoved和OutboundRemoved是按单元类型从入站队列和出站队列中处理的单元格总数。InboundTime和
+  OutboundTime是按单元类型处理的所有单元的总等待时间(以毫秒为单位)。仅当从队列中移除至少一个单元时才出现。
+
+  这些事件在每个电路中大约每秒产生一次;没有添加或处理任何单元的电路不会生成事件。只有在设置了TestingTorNetwork时才会生成这些事件。
+ [首次在0.2.5.2-alpha中添加]
+
+4.1.24。令牌桶加
+
+  的语法是:
+ "650" SP "TB_EMPTY" SP " BucketName [SP "ID=" ConnID] SP "READ=" ReadBucketEmpty SP " write =" WriteBucketEmpty SP "LAST=" LastRefill CRLF
+
+     BucketName = "GLOBAL" / "RELAY" / "ORCONN"
+     ReadBucketEmpty = 1 *位
+     WriteBucketEmpty = 1 *位
+     LastRefill = 1 *位
+
+  例子有:
+
+     650 TB_EMPTY ORCONN ID=16读=0写=0最后=100
+     全局读=93写=93最后=100
+     中继读取=93写入=93最后=100
+
+  此事件在重新填充先前空的令牌桶时生成。BucketNames“GLOBAL”和“RELAY”关键字用于全局或中继令牌桶，BucketName“ORCONN”用于or连接的令牌桶。控制器必须容忍无法识别的bucket名。
+
+  仅当BucketName为“ORCONN”时，才包含ConnID。
+
+  如果全局桶和中继桶以及/或一个或多个连接的桶同时用完令牌，将生成多个单独的事件。
+
+  ReadBucketEmpty (WriteBucketEmpty)是millis中读(写)桶自上次填充以来为空的时间。LastRefill是指从上次refill到millis的时间。
+
+  如果一个bucket变成负数，而重新填充令牌没有让它再次变成正数，那么在每个重新填充间隔期间，当bucket包含0个或更少的令牌时，将会出现多个连续的TB_EMPTY事件。在这种情况下，ReadBucketEmpty或WriteBucketEmpty被封顶在LastRefill，以避免重复报告空时间。
+
+  只有在设置了TestingTorNetwork时才会生成这些事件。
+ [首次在0.2.5.2-alpha中添加]
+
+4.1.25。HiddenService描述符
+
+  的语法是:
+ "650" SP "HS_DESC" SP Action SP HSAddress SP AuthType SP HsDir [SP DescriptorID] [SP "REASON=" REASON] [SP "REPLICA=" REPLICA] [SP "HSDIR_INDEX=" HSDirIndex]
+
+    Action =“请求”/“上传”/“收到”/“上传”/“忽略”/“失败”/“创建”
+    HSAddress = 16*Base32Character / 56*Base32Character / "UNKNOWN"
+    AuthType = "NO_AUTH" / "BASIC_AUTH" / "STEALTH_AUTH" / "UNKNOWN"
+    HsDir = LongName /指纹/“未知”
+    DescriptorID = 32*Base32Character / 43*Base64Character
+    原因= "BAD_DESC" / "QUERY_REJECTED" / "UPLOAD_REJECTED" / "NOT_FOUND" / "UNEXPECTED" / "QUERY_NO_HSDIR" / "QUERY_RATE_LIMITED"
+    = 1 *数字复制品
+    HSDirIndex = 64 * HEXDIG
+
+    当在缓存中没有找到所需的HiddenService描述符，并且使用网络执行获取或上传操作时，将触发这些事件。
+
+    如果只有一个DescriptorID(例如使用HSFETCH命令)触发了fetch，那么HSAddress只出现在Action=RECEIVED中，因为没有办法从DescriptorID知道HSAddress，因此值将是“UNKNOWN”。
+
+    如果我们已经有了v0描述符，那么新获取的v2描述符将被忽略，并且将生成带有“IGNORE”操作的“HS_DESC”事件。
+
+    对于HsDir，始终首选LongName。如果在发送事件时在节点列表中找不到HsDir，则将使用指纹。
+
+    如果操作是“失败”，Tor也应该发送原因字段。理性的可能价值是:
+       -“BAD_DESC”-描述符被检索，但发现不可解析。
+       - "QUERY_REJECTED" -查询被HS目录拒绝。
+       -描述符被HS目录拒绝。
+       -“NOT_FOUND”- HS描述符与给定的标识符未被找到。
+       -“意外”-失败的性质是未知的。
+       - "QUERY_NO_HSDIR" -没有为查询找到合适的HSDir。
+       - "QUERY_RATE_LIMITED" -此服务的查询是费率受限的
+
+    对于“QUERY_NO_HSDIR”或“QUERY_RATE_LIMITED”，HsDir将被设置为“UNKNOWN”，它分别是在tor 0.3.1.0-alpha和0.4.1.0-alpha中引入的。
+
+    如果动作是“CREATED”，Tor也应该发送副本字段。副本字段包含生成的描述符的副本号。复制号在rend-spec.txt章节1.3中指定，并确定描述符的描述符ID。
+
+    对于隐藏服务v3，以下方法适用:
+
+       "HSDIR_INDEX="是一个可选字段，仅适用于版本3，它包含了上传到或获取描述符的HsDir的计算索引。
+
+       “DescriptorID”键是用于“HsDir”上索引值的描述符盲键。
+
+       “REPLICA=”字段没有用于“CREATED”事件，因为v3没有在描述符ID计算中使用副本号。
+
+       因为客户端身份验证还没有实现，所以“AuthType”字段总是“NO_AUTH”。
+ [HS v3支持增加了0.3.3.1-alpha]
+
+4.1.26。HiddenService描述符内容
+
+  的语法是:
+ “650”“+”“HS_DESC_CONTENT”SP HSAddress SP DescId SP HsDir CRLF
+               描述符CRLF。”CRLF "650" SP "OK" CRLF
+
+    HSAddress = 16*Base32Character / 56*Base32Character / "UNKNOWN"
+    DescId = 32*Base32Character / 32*Base64Character
+    HsDir = LongName / "UNKNOWN"
+    描述符=在租约-spec.txt章节1.3 (v2)或租约-spec-v3.txt章节2.4 (v3)中指定的格式化描述符的文本，或失败时为空字符串。
+
+  当接收到成功获取的HS描述符时触发此事件。然后对描述符的文本进行回复。如果启用了HS_DESC事件，则会在接收到的操作之后立即回复该事件。
+
+  如果取回失败，描述符是一个空字符串，HSAddress被设置为“UNKNOWN”。应该使用HS_DESC事件来获取关于失败请求的更多信息。
+
+  如果从HS_DESC事件中获取QUERY_NO_HSDIR或QUERY_RATE_LIMITED原因失败，则将HsDir设置为“UNKNOWN”。这是在
+  分别为0.3.1.0-alpha和0.4.1.0-alpha。
+
+  预期它接收回复的速度相对较快，因为它是通过Tor网络获取信息所需的时间。这可以在几秒到60秒之间(不是硬性限制)。但是，在任何情况下，此事件都会响应描述符的内容或空的内容。
+ [HS_DESC_CONTENT在Tor 0.2.7.1-alpha中添加][HS v3支持增加0.3.3.1-alpha]
+
+4.1.27。网络的活力已经发生了变化
+
+  语法:
+ “650”SP“网络活跃度”SP状态CRLF
+     Status = "UP" /;网络现在似乎是可访问的。“下来”/;网络现在似乎不可访问。
+
+  控制器必须容忍无法识别的状态类型。
+ [在Tor 0.2.7.2-alpha中添加了NETWORK_LIVENESS]
+
+4.1.28。可插式传输日志
+
+   语法:
+ "650" SP "PT_LOG" SP PT=程序SP消息
+
+      Program = *TransportPlugin配置选项中定义的程序路径。Tor接受相对路径和完整路径。
+      Message = PT发送回tor父进程的日志消息减去“log”字符串前缀。格式化为在pt-spec.txt节"3.3.4中指定的格式。可插入的
+                传输日志消息”。
+
+   当tor收到来自PT的日志消息时触发此事件。
+
+   例子:
+
+      PT (obfs4):日志严重性=调试消息=“连接到A桥”
+ 由此产生的控制端口事件为:
+
+      Tor: 650 PT_LOG PT=/usr/bin/obs4proxy严重性=调试消息=“连接到A桥”
+ [在Tor 0.4.0.1-alpha中添加PT_LOG]
+
+4.1.29。可插拔的运输状态
+
+   语法:
+ "650" SP "PT_STATUS" SP PT=程序SP传输=传输SP消息
+
+      Program = *TransportPlugin配置选项中定义的程序路径。Tor接受相对路径和完整路径。
+      Transport =这个值表示PT是什么，比如名称或实例使用的协议。
+      PT返回到tor父进程的状态消息减去“status”字符串前缀。格式化如在pt-spec.txt节“3.3.5可插拔
+                交通状态信息”。
+
+   当tor收到来自PT的日志消息时触发此事件。
+
+   例子:
+
+      PT (obfs4):状态传输=obfs4连接=成功
+ 由此产生的控制端口事件为:
+
+      Tor: 650 PT_STATUS PT=/usr/bin/obs4proxy TRANSPORT=obfs4 CONNECT=成功
+ [PT_STATUS被添加到Tor 0.4.0.1-alpha中]
+
+5. 实现注意事项
+
+5.1。身份验证
+
+  如果控制端口是打开的，并且没有启用身份验证操作，那么Tor信任任何连接到控制端口的本地用户。这通常是一个糟糕的想法。
+
+  如果“CookieAuthentication”选项为真，Tor将一个名为“control_auth_cookie”的“magic cookie”文件写入其数据目录(或写入在“CookieAuthFile”选项中指定的另一个文件)。为了验证，控制器必须证明它可以读取cookie文件的内容:
+
+  *当前版本的Tor支持cookie认证
+ 使用“COOKIE”认证方法:控制器发送以十六进制编码的COOKIE文件的内容。当控制器的文件系统读访问权限大于它所连接的进程时，这种身份验证方法就会使运行控制器的用户遭受非预期的信息泄露攻击。(注意，控制器可以连接到Tor之外的进程。)即使控制器的用户显式地指定了从哪个文件名读取身份验证cookie，使用它也几乎不安全。由于这个原因，COOKIE认证方法已经被弃用，并将被删除
+    在未来版本之前。
+
+  * 0.2.2。从0.2.2.36开始的x个版本的Tor，以及的所有版本
+
+    Tor在0.2.3.12-alpha后，支持使用“SAFECOOKIE”认证方法的cookie认证，它公开的关于cookie文件内容的信息少得多。
+
+  如果设置了'HashedControlPassword'选项，它必须包含一个秘密密码的咸散列。的值计算咸散列
+  RFC 2440 (OpenPGP)中的S2K算法，并以S2K说明符作为前缀。
+  然后用十六进制编码，前缀是指示符序列“16:”。因此，例如，密码'foo'可以编码为:
+
+     16:660537E3E1CD49996044A3BF558097A981F539FEA2F9DA662B4626C1C2  ++++++++++++++++**^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 盐                        散列值指标
+
+  您可以通过调用来生成密码的salt
+ “tor, hash-password <密码> '
+ 或者使用Python和Java控制器库中的示例代码。
+  为了在这个方案下进行身份验证，控制器向Tor发送用于生成密码的原始秘密，可以是引用的字符串，也可以是十六进制编码的。
+
+5.2。不要让缓冲变得太大。
+
+  对于旧版本的Tor(在0.2.0.16-alpha之前)，如果您请求大量的事件，并且其中16MB的事件在缓冲区上排队，那么Tor进程将关闭套接字。
+
+  较新的Tor版本没有这个16 MB的缓冲区限制。但是，如果您保留大量的事件未读，Tor仍然可能会耗尽内存，因此您仍然应该注意缓冲区的大小。
+
+5.3。与v0控制协议的向后兼容性。
+
+  'version 0'控制协议在Tor 0.1.1.x中被替换。在Tor 0.2.0.x中删除了该支持。现在，每个未废弃的Tor版本都支持version 1控制协议。
+
+  为了向后兼容“0版本”控制协议，
+  用来检查第一个命令的第三个八位元是否为零。(如果是，Tor假设0版本正在使用。)
+
+  这种兼容性在Tor 0.1.2.16和0.2.0.4-alpha中被删除。
+
+5.4。控制器使用的Tor配置选项
+
+  Tor为控制器提供了一些特殊的配置选项。
+  SAVECONF没有将这些选项保存到磁盘。大多数可以通过SETCONF和GETCONF命令进行设置和检查，但是有些(下面将会提到)只能在torrc文件或命令行中提供。
+
+  通常，这些选项通过禁用部分Tor的正常操作使Tor不可用。除非控制器提供替换功能来填补这一空白，否则Tor将不能正确处理用户请求。
+ __AllDirActionsPrivate
+
+    如果为真，Tor将尝试通过匿名连接启动所有目录操作。(通常，Tor只尝试匿名与隐藏服务相关的请求。)这个选项将减慢目录访问，并可能阻止Tor完全工作，如果它还没有足够的目录信息，以建立电路。
+ (布尔。默认值:“0”)。
+ __DisablePredictedCircuits
+
+    如果为真，Tor将不会启动连接到流的抢占式“通用”电路。(它仍将推出测试电路和隐藏服务。)
+ (布尔。默认值:“0”)。
+ __LeaveStreamsUnattached
+
+    如果为真，Tor将不会自动将新的流附加到电路上;相反，控制器必须用ATTACHSTREAM附加它们。如果控制器不附加流，它们的数据将永远不会被路由。
+ (布尔。默认值:“0”)。
+ __HashedControlSessionPassword
+
+    作为HashedControlPassword，但不保存到torrc文件
+    SAVECONF。加入Tor 0.2.0.20-rc。
+ __ReloadTorrcOnSIGHUP
+
+    如果此选项为真(缺省值)，则每次获得SIGHUP(来自控制器或通过信号)时，我们就从磁盘重新加载torrc。
+    否则,我们不喜欢。这个选项的存在是为了防止当用户出于其他原因(例如，旋转日志)向Tor发送HUP时，控制器的选项被覆盖。
+ (布尔。默认值是“1”)
+ __OwningControllerProcess
+
+    如果将此选项设置为进程ID, Tor将定期检查具有指定PID的进程是否存在，如果不存在，则退出。添加在Tor 0.2.2.28 beta。这个选项的预期用途在3.23节中用相关的TAKEOWNERSHIP命令说明。
+
+    注意，这个选项只能指定一个进程ID，这与可以通过多个控制连接发送的TAKEOWNERSHIP命令不同。
+ (字符串。默认值:设置)。
+ __OwningControllerFD
+
+    如果这个选项是一个有效的套接字，Tor将从这个套接字上的一个打开的控制连接开始。加入Tor 0.3.3.1-alpha。
+
+    这个套接字将是一个拥有的控制器，就好像它已经被调用过一样
+    TAKEOWNERSHIP。它将被自动验证。这个选项只能被其他正在启动的程序使用。
+
+    不能通过SETCONF更改此选项;它必须在torrc中或通过命令行进行设置。
+ (整数。默认值:1。)
+ __DisableSignalHandlers
+
+    如果这个选项在启动时设置为true，那么Tor将不会安装任何信号处理程序来监视POSIX信号。信号控制器命令仍然有效。
+
+    当控制进程宁愿自己处理信号时，这个选项意味着将Tor嵌入到另一个进程中。
+
+    不能通过SETCONF更改此选项;它必须在torrc中或通过命令行进行设置。
+ (布尔。默认值:0)。
+
+5.5。从引导状态事件的阶段。
+ [用于Tor在0.4.0之前报告的引导阶段。x,看到
+  5.6节)
+
+  本节描述Tor目前报告的各种引导阶段。控制器不应该假设百分比和这里列出的标签将继续匹配，甚至标签将保持相同的顺序。如果相关的引导步骤已经完成，或者不再需要该阶段，也可以跳过(不报告)某些阶段。只有“开始”和“完成”保证存在于所有未来的版本中。
+
+  当前的Tor版本以单调的顺序进入这些阶段。
+  将来的驱动器可能会重新访问早期阶段，例如，如果网络失败。
+
+5.5.1。引导程序报告概述。
+
+  引导阶段可以被看作属于三个阶段中的一个:
+
+  1. 初始连接到Tor继电器或电桥
+  2. 获取目录信息
+  3.构建应用电路
+
+  Tor没有明确进入第一阶段;这是Tor采取的其他行动的副作用。Tor可以连接回退目录服务器，也可以连接到候选保护服务器。对于引导报告而言，任何一种都可以算作阶段1。
+
+  阶段2可能涉及到Tor联系目录服务器，或者它可能涉及到从前一个会话读取缓存的目录信息。如果已经有足够的缓存目录信息来构建电路，则可以跳过阶段2的大部分内容。Tor将推迟第2阶段的进度报告，直到第1阶段完成。
+
+  Tor延迟了这个报告，因为Tor已经有足够的目录信息来构建电路，但还不能连接到中继上。如果没有这种延迟，用户可能会错误地看到，当与任何中继建立TCP连接这样的基本操作失败时，Tor在大量的进展中卡住了。
+
+  Tor也没有具体进入第三阶段;这是Tor为了某种目的而构建电路的副作用。在典型的客户机中，Tor构建预测电路以降低应用程序连接请求的延迟。在阶段3,Tor可能会建立新的连接到继电器或桥，它没有连接到阶段
+  1.
+
+5.5.2。引导的阶段阶段1。
+
+  阶段0:tag=开始摘要=“开始”
+
+  Tor从这个阶段开始。
+
+  阶段1:tag=conn_pt摘要=“连接到可插入传输”[此阶段是0.4.0.x中的新版本]
+
+  Tor正在为可插拔传输与传输插件建立TCP连接。Tor将使用这种可插拔传输来首次连接到桥上。
+
+  阶段2:tag=conn_done_pt摘要=“连接到可插入传输”[新增0.4.0.x]
+
+  Tor已经为可插拔传输完成了与传输插件的TCP连接。
+
+  阶段3:tag=conn_proxy摘要=“连接到代理”[在0.4.0.x中新增]
+
+  Tor正在建立一个到代理的TCP连接来建立它的第一个到一个中继或网桥的连接。
+
+  阶段4:tag=conn_done_proxy摘要=“连接到代理”[新增0.4.0.x]
+
+  Tor已经完成了它与代理的TCP连接，从而实现了它与一个中继或网桥的第一次连接。
+
+  阶段5:tag=conn summary="连接到继电器"[新的0.4.0.x;以前版本的Tor有一个“conn_dir”阶段，有时但不总是对应于连接到目录服务器。
+
+  Tor第一次连接到一个继电器。这可能是通过Tor已经建立的可插入传输或代理连接实现的。
+
+  阶段10:tag=conn_done总结=“连接到中继”[新的0.4.0.x]
+
+  Tor已经完成了与继电器的第一次连接。
+
+  阶段14:tag=握手概要=“带继电器的握手”[新增0.4.0.x;以前版本的Tor有一个“handshake_dir”阶段]
+
+  Tor正在与一个中继进行TLS握手。
+
+  阶段15:tag=handshake_done总结=“完成与中继的握手”[新增0.4.0.x]
+
+  Tor已经完成了与中继的TLS握手。
+
+5.5.3。Bootstrap的阶段2。
+
+  阶段20:tag=onehop_create summary=“建立加密的目录连接”[在0.4.0之前]。x，这是15]
+
+  一旦TLS用中继完成，Tor将发送一个CREATE_FAST单元来建立一个单跳电路来检索目录信息。
+  它将保持在这个阶段，直到它收到CREATED_FAST单元，表明电路准备好了。
+
+  阶段25:tag=requesting_status summary=“请求网络状态共识”[在0.4.0之前。x，这是20]
+
+  一旦我们完成了我们的一跳电路，我们将开始一个新的流来获取网络状态共识。我们将停留在这个阶段，直到我们得到“connected”中继单元，这表明我们已经建立了目录连接。
+
+  阶段30:tag=loading_status summary=“Loading networkstatus consensus”[在0.4.0之前]。x，这是25]
+
+  一旦我们建立了目录连接，我们将开始获取networkstatus共识文档。这可能需要一段时间;这个阶段是使用“progress”关键字来表示部分进展的好机会。
+
+  如果我们选择的目录服务器没有networkstatus共识的副本，因此我们必须请求另一个，或者它确实给了我们一个副本，但我们发现它无效，则此阶段可能会停止。
+
+  第40阶段:tag=loading_keys summary="Loading authority key certs"
+
+  有时，当我们加载完networkstatus共识后，会发现我们没有签署该共识的密钥的所有权威密钥证书。此时，我们将获得的共识暂时搁置，并获取密钥，以便验证签名。
+
+  阶段45 tag=requesting_descriptors总结=“请求中继描述符”
+
+  一旦我们有了有效的networkstatus共识，并且检查了它的所有签名，我们就开始请求中继描述符。我们停留在这个阶段，直到我们收到了一个响应描述符请求的“连接”中继单元。
+ 一些版本的Tor(从0.2.6.2 alpha开始，但在此之前)
+  0.4.0.x): Tor只能报告内部路径;参见
+  5.6)
+
+  阶段50:tag=loading_descriptors总结=“加载中继描述符”
+
+  我们将要求从几个不同的位置获取中继描述符，因此这一步可能会在引导过程中占很大一部分，特别是对于连接速度较慢的用户。我们会一直停留在这个阶段，直到我们有了网络状态一致性中列出的大部分可用继电器的描述符(根据Tor的配置和网络一致性参数，这可能在25%到95%之间)。
+  这个阶段也是使用“progress”关键字来表示部分步骤的好机会。
+ 一些版本的Tor(从0.2.6.2 alpha开始，但在此之前)
+  0.4.0.x): Tor只能报告内部路径;参见
+  5.6)
+
+  Phase 75: tag=enough_dirinfo summary="已加载足够目录信息构建电路"[新增0.4.0.x]以前，Tor一旦有了足够的目录信息，就会误导性地报告“conn_or”标签。
+
+5.5.4。Bootstrap的阶段3。
+
+  第76阶段:tag=ap_conn_pt summary="连接到可插拔传输来构建电路"[新增0.4.0.x]
+
+  这类似于conn_pt，除了连接到Tor需要用于构建应用程序电路的其他继电器或桥。
+
+  Phase 77: tag=ap_conn_done_pt summary="连接到可插拔传输构建电路"[新增0.4.0.x]
+
+  这类似于conn_done_pt，除了连接到Tor需要用来构建应用程序电路的其他继电器或桥。
+
+  阶段78:tag=ap_conn_proxy摘要=“连接到代理构建电路”[新增0.4.0.x]
+
+  这类似于conn_proxy，除了连接到Tor需要用来构建应用程序电路的额外的继电器或桥。
+
+  阶段79:tag=ap_conn_done_proxy摘要="连接到代理构建电路"[新增0.4.0.x]
+
+  这类似于conn_done_proxy，除了连接到Tor需要用来构建应用程序电路的额外的继电器或桥。
+
+  阶段80:tag=ap_conn总结="连接到一个中继建立电路"[新的0.4.0.x]
+
+  这与conn类似，除了连接到Tor需要用于构建应用程序电路的其他继电器或桥。
+
+  阶段85:tag=ap_conn_done总结=“连接到一个中继构建电路”[新0.4.0.x]
+
+  这类似于conn_done，除了连接到Tor需要用于构建应用程序电路的其他继电器或桥。
+
+  第89阶段:tag=ap_handshake总结=“用一个中继完成握手以建立电路”[新0.4.0.x]
+
+  这类似于握手，除了连接到Tor需要用来构建应用程序电路的额外的继电器或桥。
+
+  90阶段:tag=ap_handshake_done总结=“握手结束，用一个中继建立电路”[新的0.4.0.x]
+
+  这类似于handshake_done，除了连接到Tor需要用来构建应用程序电路的额外的继电器或桥。
+
+  阶段95:tag=circuit_create summary="建立一个[n internal] Tor电路"[在0.4.0之前]。x，这是90]
+
+  一旦我们完成了与电路的第一跳的TLS握手，我们将开始尝试做一些3跳电路，以防我们很快需要它们。
+ 一些版本的Tor(从0.2.6.2 alpha开始，但在此之前)
+  0.4.0.x): Tor只能报告内部路径;参见
+  5.6)
+
+  阶段100:tag=完成摘要=“完成”
+
+  一个完整的3跳电路已经建立。Tor现在可以处理应用程序连接了。
+ 一些版本的Tor(从0.2.6.2 alpha开始，但在此之前)
+  0.4.0.x): Tor只能报告内部路径;参见
+  5.6)
+
+5.6。旧版本Tor报告的引导阶段
+
+  Tor报告的这些阶段均大于0.4.0.x。有关Tor的新版本，请参阅第5.5节。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型的情况)，Tor将建立出口和内部电路。当引导程序完成时，Tor将准备处理请求退出电路的应用程序，例如
+  万维网。
+
+  如果共识不包含出口，Tor将只建立内部电路。在本例中，前面的状态将包含如上所述的“内部”。当引导完成，Tor将准备处理一个应用程序请求内部电路隐藏服务在"。洋葱”地址。
+
+  如果未来共识包含退出，则可能出现退出电路。
+
+  阶段0:tag=开始摘要=“开始”
+
+  Tor从这个阶段开始。
+
+  阶段5:tag=conn_dir摘要="连接到目录服务器"
+
+  一旦Tor选择了目录服务器，Tor就会发送此事件——例如，如果是第一次引导或在长时间宕机后，Tor会发送一个权限，或者在缓存的目录信息中列出一个中继。
+
+  Tor将一直停留在这个阶段，直到它成功地与某个目录服务器建立了TCP连接。这个阶段的问题通常是因为Tor没有网络连接，或者因为本地防火墙删除了SYN包。
+
+  阶段10:tag=handshake_dir摘要=“完成与目录服务器的握手”
+
+  当Tor使用作为目录服务器(或者使用其https代理)的中继或权限建立TCP连接时，就会发生此事件。Tor保持在这个阶段，直到TLS与中继或授权完成握手。
+
+  这个阶段出现的问题通常是因为Tor的防火墙正在对它进行更复杂的MITM攻击，或者对Tor的握手进行包级关键字识别。
+
+  阶段15:tag=onehop_create summary=“建立加密的目录连接”
+
+  一旦TLS用中继完成，Tor将发送一个CREATE_FAST单元来建立一个单跳电路来检索目录信息。
+  它将保持在这个阶段，直到它收到CREATED_FAST单元，表明电路准备好了。
+
+  阶段20:tag=requesting_status summary=“请求网络状态共识”
+
+  一旦我们完成了我们的一跳电路，我们将开始一个新的流来获取网络状态共识。我们将停留在这个阶段，直到我们得到“connected”中继单元，这表明我们已经建立了目录连接。
+
+  阶段25:tag=loading_status summary=“Loading networkstatus consensus”
+
+  一旦我们建立了目录连接，我们将开始获取networkstatus共识文档。这可能需要一段时间;这个阶段是使用“progress”关键字来表示部分进展的好机会。
+
+  如果我们选择的目录服务器没有networkstatus共识的副本，因此我们必须请求另一个，或者它确实给了我们一个副本，但我们发现它无效，则此阶段可能会停止。
+
+  第40阶段:tag=loading_keys summary="Loading authority key certs"
+
+  有时，当我们加载完networkstatus共识后，会发现我们没有签署该共识的密钥的所有权威密钥证书。此时，我们将获得的共识暂时搁置，并获取密钥，以便验证签名。
+
+  Phase 45 tag=requesting_descriptors summary=“请求中继描述符[内部路径]”
+
+  一旦我们有了有效的networkstatus共识，并且检查了它的所有签名，我们就开始请求中继描述符。我们停留在这个阶段，直到我们收到了一个响应描述符请求的“连接”中继单元。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型的情况)，Tor将要求使用描述符来描述出口和内部路径。如果没有，Tor将只要求使用内部路径的描述符。在这种情况下，此状态将包括如上所述的“内部”。
+
+  阶段50:tag=loading_descriptors summary="加载[内部路径]中继描述符"
+
+  我们将要求从几个不同的位置获取中继描述符，因此这一步可能会在引导过程中占很大一部分，特别是对于连接速度较慢的用户。我们会一直停留在这个阶段，直到我们有了网络状态一致性中列出的大部分可用继电器的描述符(根据Tor的配置和网络一致性参数，这可能在25%到95%之间)。
+  这个阶段也是使用“progress”关键字来表示部分步骤的好机会。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型情况)，Tor将下载出口和内部路径的描述符。如果没有，Tor将只下载内部路径的描述符。在这种情况下，此状态将包括如上所述的“内部”。
+
+  阶段80:tag=conn_or summary="连接到Tor网络[内部]"
+
+  一旦我们有了一个有效的共识和足够的中继描述符，我们选择入口警卫并开始尝试建立一些电路。这个步骤类似于上面的“conn_dir”阶段;唯一的区别是背景。
+
+  如果Tor以足够多的最近缓存的目录信息启动，那么它的第一个引导状态事件将是conn_or阶段。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型的情况)，Tor将建立出口和内部电路。如果没有，Tor将只构建内部电路。
+  在这种情况下，该状态将包括如上所述的“内部(ly)”。]
+
+  阶段85:tag=handshake_or summary="完成[内部电路的]第一跳握手"
+
+  这个阶段类似于“handshake_dir”阶段，但是如果我们完成了到Tor中继的TCP连接并且我们已经到达了“conn_or”阶段，这个阶段就会到达。我们将停留在这个阶段，直到我们完成与Tor中继的TLS握手。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型情况)，如果有出口或内部电路，Tor可能完成与第一跳的握手。在本例中，它不会指定是哪种类型。如果共识中没有存在，
+  Tor只会制造内部电路。在这种情况下，此状态将包括如上所述的“内部”。
+
+  阶段90:tag=circuit_create summary="建立[n个内部]Tor电路"
+
+  一旦我们完成了与电路的第一跳的TLS握手，我们将开始尝试做一些3跳电路，以防我们很快需要它们。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型的情况)，Tor将建立出口和内部电路。如果没有，Tor将只构建内部电路。
+  在这种情况下，此状态将包括如上所述的“内部”。
+
+  阶段100:tag=完成摘要=“完成”
+
+  一个完整的3跳电路已经建立。Tor现在可以处理应用程序连接了。
+ [较新的Tor版本(0.2.6.2 alpha及更高版本):
+  如果共识包含出口(典型的情况)，Tor将建立出口和内部电路。在这个阶段，Tor将准备好处理一个请求退出电路到像the World这样的服务的应用程序
+  万维网。
+
+  如果共识不包含出口，Tor将只建立内部电路。在本例中，前面的状态将包含如上所述的“内部”。在这个阶段，Tor将准备好处理一个请求内部电路到隐藏服务的应用。洋葱”地址。
+
+  如果未来共识包含退出，则可能出现退出电路。

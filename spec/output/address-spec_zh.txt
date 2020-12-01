@@ -1,0 +1,52 @@
+
+
+                          Tor中的特殊主机名
+                               尼克·马修森
+
+1. 概述
+
+  大多数时候，Tor将用户指定的主机名视为不透明的:当用户连接到www.torproject.org时，Tor选择一个退出节点并使用该节点连接到“www.torproject.org”。但是，一些主机名可以用来覆盖Tor的默认行为和电路构建规则。
+
+  这些主机名可以作为SOCKS4a或的地址部分传递给Tor
+  SOCKS5请求。如果应用程序使用仅限IP的方法(如SOCKS4、TransPort或NATDPort)连接到Tor，那么这些主机名可以使用MapAddress配置选项或MapAddress控制命令替换某些IP地址。
+
+2 . .exit
+
+  语法(主机名):[name-or-digest]。退出name-or-digest .exit
+
+  主机名是一个有效的主机名;是a的昵称
+  Tor节点或该节点公钥的十六进制编码摘要。
+
+  当Tor看到这种格式的地址时，它使用指定的主机名作为退出节点。如果没有给定“hostname”组件，Tor将默认为发布的退出节点的IPv4地址。
+
+  尝试解析主机名是有效的，事实上，在成功时，Tor将缓存表单"www.google.com.foo.exit=64.233.161.99.foo.exit"的内部mapaddress以加速后续查找。
+
+  由于潜在的应用程序级别的攻击，在Tor 0.2.2.1-alpha中默认禁用.exit符号。
+
+  示例:www.example.com.exampletornode.exit
+
+        从名为“exampletornode”的节点连接到www.example.com。
+ exampletornode.exit
+
+        使用“exampletornode”作为出口连接到发布的IP地址“exampletornode”。
+
+3 . .onion
+
+  语法:[摘要]。洋葱(忽视)。[摘要].onion
+
+  摘要是一个隐藏服务的标识键的SHA1散列的前80位，用base32编码。
+
+  当Tor看到这种格式的地址时，它尝试查找并连接到指定的隐藏服务。详细信息请参见rent -spec.txt。
+
+  地址的“被忽略”部分用于虚拟主机，并且在Tor 0.2.4.10-alpha及以后的版本中得到支持。
+
+4 . .noconnect
+
+  语法:[string] .noconnect
+
+  当Tor看到这种格式的地址，它立即关闭连接，而不附加到任何电路。这对于那些想要测试一个给定的应用程序是否确实使用了它们正在控制的同一个Tor实例的控制器非常有用。
+
+  这个特性是在Tor 0.1.2.4-alpha中添加的，在Tor中去掉的
+  0.2.2.1-alpha，而不是担心它提供了另一种检测途径
+  Tor用户通过应用程序级的网络技巧。
+

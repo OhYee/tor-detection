@@ -1,0 +1,780 @@
+
+
+                  Tor带宽文件格式juga teor
+
+1. 范围和预赛
+
+  本文档描述了Tor的带宽文件的格式，版本
+  1.0.0,后来。
+
+  它是针对现有带宽文件格式的新规范，我们称之为版本1.0.0。它还指定了新的格式版本
+  1.1.0或更高版本，向后兼容1.0.0解析器。
+
+  由于Tor版本0.2.4.12-alpha，目录权威使用名为“V3BandwidthsFile”的带宽文件生成
+  Torflow[1]。这种格式的细节在Torflow中有描述
+  README.spec.txt。我们还总结了该规范中的格式。
+
+    “必须”、“不得”、“必须”、“应当”、“应当”等关键词
+    本文档中的“不”、“应该”、“不应该”、“推荐”、“可能”和“可选”将按照中描述的方式解释
+    RFC 2119。
+
+1.2。确认
+
+  最初的带宽发生器(Torflow)和格式是由mike创建的。Teor建议在编写这个规范的同时为pastly的新带宽生成器实现做出贡献。
+
+  此规范是在以下方面反馈后修改的:
+
+    尼克·马修森(nickm)
+    伊恩•看起来这次事件和(irl)
+
+1.3。大纲
+
+  Tor目录协议(dir-spec.txt[3])的3.4.1和3.4.2节，使用术语带宽测量，在这里指的是所谓的带宽文件。
+
+  带宽文件包含继电器带宽容量的信息，由带宽发生器(以前称为带宽扫描器)产生。
+
+1.4。格式版本
+
+  1.0.0 -遗留带宽文件格式
+
+  1.1.0 -添加一个包含带宽文件信息的头。记录sbws和Torflow继电器线路键。
+
+  如果没有足够的合格继电器，带宽文件
+          应该包含一个头，但没有继电器。(为了匹配Torflow现有的行为。)
+
+          在标头中添加扫描程序和目标国家。
+          将新的KeyValue行添加到带有关于文件中包含的继电器数量的统计信息的头列表部分。
+          使用不同的带宽值(平均和描述符带宽)向中继带宽线添加新的关键值。
+
+  1.4.0 -在头线和中继线中增加监控键值。
+
+          由于诊断原因，被排除的继电器的继电器线可能出现在带宽文件中。类似地，如果没有足够的合格继电器，带宽文件可以包含所有已知的继电器。
+
+          诊断继电器线路应标记为vote=0，和
+          Tor不应该在投票中使用他们的带宽。
+
+  1.5.0 -添加系统信息头，如操作系统、OpenSSL和
+          Tor版本。
+
+  所有Tor版本都可以使用格式版本1.0.0。
+
+  所有的Tor版本都可以使用1.1.0或更高版本的格式，但是在0.3.5.1-alpha之前的Tor版本会警告消息头是否包含时间戳之后的任何KeyValue行。
+
+  Tor版本0.4.0.3-alpha, 0.3.5.8, 0.3.4.11和更早的版本不理解“投票=0”。相反，他们将投票支持sbws在诊断中继线路上设置的实际带宽:
+    * 1用于“未测量=1”的继电器，和
+    *当“under_min_report=1”时，中继的测量和缩放带宽。
+
+2. 格式的细节
+
+  带宽文件必须包含以下部分:
+  -标题列表(仅一次)，它是部分有序的列表
+    -标题行(一次或多次)，然后
+  -继电器线路(零次或多次)，顺序任意。
+  如果它不包含这些部分，解析器应该忽略该文件。
+
+2.1。定义
+
+  下面的非终端是在Tor目录协议1.2节中定义的。2.1.1。2.1.3。:
+ 保龄球
+    Int
+    SP(空间)
+    NL(换行符)
+    KeywordChar
+    别名hexdigest(一个“$”，后跟40个十六进制字符([a- fa -f0-9]))
+
+  txt[4]的第2节定义的非终端:
+ version_number
+
+  我们定义了以下非终端:
+
+    Line::= ArgumentChar* NL
+    中继线::= KeyValue (SP KeyValue)* NL
+    = KeyValue NL
+    = Key "="值
+    = (KeywordChar | "_")+
+    价值::= ArgumentCharValue +
+    ArgumentCharValue::=除NL和SP之外的任何打印ASCII字符。
+    终结者::= "====="或"===="
+                   生成器应该使用5个字符的终结者。
+    时间戳::= Int
+    带宽::= Int
+    MasterKey::=用base64编码的Ed25519公钥，省略填充字符。
+    DateTime::= "YYYY-MM-DDTHH:MM:SS"，如ISO 8601
+    =两个大写ASCII字母([A-Z]{2})，定义为
+                    ISO 3166-1阿尔法-2加“ZZ”表示未知的国家(如目的地在内容分发网络中)。
+    =一个或多个由逗号分隔的国家代码([a - z]{2}(，[a - z]{2})*)。
+
+  注意，在Tor目录协议中定义的key_value和value与这里的KeyValue和value的格式不同。
+
+  小于0.3.5.1-alpha的Tor版本要求文件中的所有行不超过510个字符。之前的限制是254个字符
+  Tor 0.2.6.2 alpha和更早版本。解析器可能会忽略较长的行。
+
+  注意，目录权限只支持最近的两个稳定的Tor版本，所以我们希望在2019年Tor 0.4.0发布后，行限制将被删除。
+
+2.2。标题列表格式
+
+  它由一个时间戳行和零个或多个标题行组成。
+
+  除了第一个时间戳行之外，所有的标题行都必须符合HeaderLine格式。
+
+  时间戳行不是标题行，以保持与传统带宽文件格式的兼容性。
+
+  一些标题行必须出现在特定的位置，如下所示。所有其他行可以以任何顺序出现。
+
+  如果解析器不能识别标题行的任何额外内容，则必须忽略该行。
+
+  如果标题行不符合这种格式，解析器应该忽略该行。
+
+  它包括:
+
+    时间戳问
+ (一开始，就一次。)
+
+      Unix纪元时间以秒为单位的最新生成器带宽结果。
+
+      如果生成器实现有可能独立失败的多个线程或子进程，则应该从每个线程获取最近的时间戳，并使用最老的值。这将确保所有线程继续运行。
+
+      如果有一些线程没有连续运行，那么应该将它们排除在时间戳计算之外。
+
+      如果没有最近的结果，生成器不能生成新文件。
+
+      为了向后兼容版本1.0.0，它不遵循KeyValue格式。
+ “version = " version_number问
+ [在第二位置，零或一次。]
+
+      规范文档格式版本。
+      它使用语义版本化[5]。
+
+      这一行是在该规范的1.1.0版本中添加的。
+
+      版本1.0.0文档不包含这一行，version_number被认为是“1.0.0”。
+ 问“软件=”价值
+ (零次或一次。)
+
+      创建该文档的软件的名称。
+
+      这一行是在该规范的1.1.0版本中添加的。
+
+      版本1.0.0文档中不包含这一行，因此该软件被认为是“torflow”。
+ “software_version = "价值问
+ (零次或一次。)
+
+      创建文档的软件版本。
+      版本可以是version_number、git提交或其他版本方案。
+
+      这一行是在该规范的1.1.0版本中添加的。
+ “file_created = " DateTime问
+ (零次或一次。)
+
+      创建文件时的ISO 8601格式和UTC时区的日期和时间戳。
+
+      这一行是在该规范的1.1.0版本中添加的。
+ “generator_started = " DateTime问
+ (零次或一次。)
+
+      当生成器启动时，ISO 8601格式和UTC时区的日期和时间时间戳。
+
+      这一行是在该规范的1.1.0版本中添加的。
+ “earliest_bandwidth = " DateTime问
+ (零次或一次。)
+
+      获得第一个中继带宽时，ISO 8601格式和UTC时区的日期和时间时间戳。
+
+      这一行是在该规范的1.1.0版本中添加的。
+ “latest_bandwidth = " DateTime问
+ (零次或一次。)
+
+      日期和时间的时间戳在ISO 8601格式和UTC时区的最新生成器带宽结果。
+
+      这个时间必须与初始时间戳行相同。
+
+      包含这个重复的值是为了让人们更容易阅读格式。
+
+      这一行是在该规范的1.1.0版本中添加的。
+ " number_eligible_relays = " Int问
+ (零次或一次。)
+
+      带宽文件中包含足够测量值的继电器的数量。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " minimum_percent_eligible_relays = " Int问
+ (零次或一次。)
+
+      每个生成的带宽文件中应该包含的共识中继电器的百分比。
+
+      如果没有达到这个阈值，请格式化版本1.3.0或更早的版本
+      不应包含任何继电器。(带宽文件总是包含一个标题。)
+
+      格式版本1.4.0和更高版本应该包括所有的继电器用于诊断，即使没有达到这个阈值。但是这些继电器应该被标记，这样Tor就不会对它们投票了。
+      详见1.4节。
+
+      在Torflow中最小的百分比是60%，所以sbws使用
+      60%作为默认值。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " number_consensus_relays = " Int问
+ (零次或一次。)
+
+      继电器的数量在一致意见中。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " percent_eligible_relays = " Int问
+ (零次或一次。)
+
+      合格继电器的数量，作为继电器数量的百分比在一致意见中。
+
+      这一行应该等于:(number_eligible_继电器* 100.0)/ number_consensus继电器的数量包括在这个文件中。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " minimum_number_eligible_relays = " Int问
+ (零次或一次。)
+
+      带宽文件中应该包含的继电器的最小数量。详细信息请参见minimum_percent_eligible_relays。
+
+      这一行应该等于:number_consensus _继电器* (minimum_percent_eligible_继电器/ 100.0)
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " scanner_country = " CountryCode问
+ (零次或一次。)
+
+      国家，就像政治地理定位一样，是发电机运行的地方。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " destinations_countries = " CountryCodeList问
+ (零次或一次。)
+
+      国家，如政治地理位置，或目标Web服务器所在的国家。
+      目标Web服务器提供生成器检索来测量带宽的数据。
+
+      这一行是在该规范的1.2.0版本中添加的。
+ " recent_consensus_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天中看到的不同共识的数量。(data_period默认为5。)
+
+      假设Tor客户端每1-2小时获取一次consensus, data_period为5天，该键的值应该在data_period * 24 / 2 = 60 data_period * 24 = 120之间
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_priority_list_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天内创建一个包含要测量优先级的继电器子集的列表的次数。(data_period默认为5。)
+
+      2019年网络中有7000个中继，该密钥的值约为:data_period * 24 / 1.5 = 80
+      当继电器在优先级列表中的比例为5%(0.05)时，测量7000 * 0.05(350)个继电器的优先级列表所需要的大约小时数为1.5。
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_priority_relay_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天中被优先度量的继电器列表中的继电器数量。(data_period默认为5。)
+
+      2019年网络中有7000个继电器，该密钥的值约为:
+          80 * (7000 * 0.05) = 28000
+      为0.05(5%)优先级列表中的继电器的比例，80为优先级列表的近似数量(参见“recent_priority_list_count”)。
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurement_attempt_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天内，任何中继排队等待测量的次数。(data_period默认为5。)
+
+      在2019年，网络中有7000个继电器，这个密钥的值应该与“recent_priority_relay_count”大致相同，假设有一次尝试测量一个被优先排序的继电器，除非存在系统、网络或实现问题。
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurement_failure_count = " Int问
+ (零次或一次。)
+
+      扫描器在最近的data_period天中试图测量中继的次数(默认为5)，但是由于系统、网络或实现问题而没有测量中继。
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurements_excluded_error_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天内没有成功测量的继电器的数量(默认为5)。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurements_excluded_near_count = " Int问
+ (零次或一次。)
+
+      在最近的data_period天内(默认为5天)进行了一些成功测量的继电器的数量，但是所有这些测量都在一段太短的时间内执行(默认为1天)。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurements_excluded_old_count = " Int问
+ (零次或一次。)
+
+      成功测量的继电器的数量，但是所有的测量都太旧了(默认超过5天)。
+
+      排除在recent_measurements_excluded_near_count中已经计数的继电器。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " recent_measurements_excluded_few_count = " Int问
+ (零次或一次。)
+
+      最近没有成功测量的继电器的数量。(默认情况下，过去5天内少于2次测量)。
+
+      排除已经在recent_measurements_excluded_near_count和recent_measurements_excluded_old_count中计数的继电器。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这一行是在本规范的1.4.0版本中添加的。
+ " time_to_report_half_network = " Int问
+ (零次或一次。)
+
+      根据合格继电器的数量和最后几天(默认为5天)的时间，报告半个网络的测量所需的时间(以秒计)。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这一行是在本规范的1.4.0版本中添加的。
+ “tor_version = " version_number问
+ (零次或一次。)
+
+      由生成器控制的Tor进程的Tor版本。
+
+      这一行是在该规范的1.5.0版本中添加的。
+
+    KeyValue问
+ (零次或多次。)
+
+      不能有多个KeyValue头行具有相同的键。
+      如果存在，解析器应该选择任意一行。
+
+      如果解析器不能识别KeyValue行中的关键字，则解析器不能识别关键字
+      必须被忽略。
+
+      未来的格式版本可能会包含附加的KeyValue标题行。
+      附加的标题行将伴随着一个较小的版本增量。
+
+      实现可以根据需要添加额外的标题行。应该更新此规范，以避免对相同头键的含义发生冲突。
+
+      解析器不能依赖于这些附加行的顺序。
+
+      附加标题行不能使用继电器测量格式中指定的任何关键字。
+      如果存在，解析器可能会忽略冲突的关键字。
+
+    《终结者》问
+ (零次或一次。)
+
+      标题列表部分以终止符结束。
+
+      在版本1.0.0中，当发现第一个中继带宽符合下一节时，头列表结束。
+
+      版本1.1.0及以后版本的实现应该使用5个字符的终止符。
+
+      Tor 0.4.0.1-alpha和以后寻找一个5字符的终结者，或第一个中继带宽线。sbws版本0.1.0到1.0.2使用了4个字符的终止符，这个bug在1.0.3中被修复了。
+
+2.3。继电器线格式
+
+  它由零条或多条包含继电器id和带宽的中继线组成。继电器及其键值是任意顺序的。
+
+  同一文件中不能有多个具有相同键的键值对
+  RelayLine。如果存在，解析器应该选择一个任意值。
+
+  每个中继标识(node_id或master_key_ed25519)不能有多个中继线。如果存在，解析器应该发出警告。
+  解析器可以拒绝文件，选择任意的中继线，或者忽略这两个中继线。
+
+  如果解析器不能识别中继线中的任何额外材料，则必须忽略这些额外材料。
+
+  每个中继线包括以下键值对:
+ “node_id = " hexdigest
+ (一次。)
+
+      中继的RSA身份密钥的指纹。
+
+      注意:在带宽文件读取Tor版本早于
+            0.3.4.1-alpha, node_id不能在行尾。
+            不再支持这些权限版本。
+
+      当前的Tor版本忽略master_key_ed25519，因此node_id必须出现在每个中继行中。
+
+      版本1.1.0及以后版本的实现应该包括node_id和master_key_ed25519。解析器应该接受至少包含其中一个的行。
+ “master_key_ed25519 = "万能钥匙
+ (零次或一次。)
+
+      继电器的主键Ed25519, base64编码，没有尾随"="，以避免KeyValue "="字符的歧义。
+
+      这个键值对应该存在，请参阅node_id下面的说明。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+ “bw = "带宽
+ (一次。)
+
+      这个中继的带宽，单位是千字节每秒。
+
+      没有零带宽:
+      Tor接受零带宽，但是它们会在旧的Tor实现中引发bug。因此，实现不应该产生零带宽。相反，他们应该使用一个作为他们的最小带宽。
+      如果带宽为零，解析器可以忽略它们。
+
+      带宽聚合:
+      多个测量值可以使用平均方案进行聚合，例如均值、中值或衰减平均值。
+
+      带宽扩展:
+      Torflow将带宽扩展到每秒千字节。其他实现应该使用每秒千字节作为初始带宽扩展。
+
+      如果对同一个网络使用不同的实现或配置进行投票，那么它们的度量可能需要进一步扩展。看到
+      附录B提供关于扩展的信息，以及一种可能的扩展方法。
+
+      MaxAdvertisedBandwidth:
+      带宽发生器必须根据maxads sedbadwidth来限制继电器的测量带宽。
+      一个中继的maxads sedbandwidth限制了它描述符中的带宽-avg。avg是maxadvertising sedbandwidth的最小值，
+      带宽，中继带宽，带宽突发，和
+      RelayBandwidthBurst。
+      因此，发电机必须限制继电器的测量带宽为其描述符的带宽avg。这个限制需要在生成器中实现，因为生成器可能会在将一致权重发送给Tor之前对其进行缩放。
+      发电机不应该根据描述符的观察带宽来限制测量的带宽，因为这对新继电器不利。
+ sbws将中继测量的带宽限制为所宣传的带宽avg。
+
+      Torflow根据继电器的带宽对其进行分区。对于未测量的继电器，Torflow使用所有描述符带宽的最小值，包括带宽avg (maxads sedbandwidth)和观察带宽。然后Torflow对每个分区中的继电器进行测量，这隐含地将一个继电器的测量带宽限制为类似继电器的带宽。
+
+      Torflow还根据测量的带宽和所有描述符带宽的最小值(测量时)的比率来生成一致的权重。所以当一个算子简化
+      对于一个继电器，Torflow减少了该继电器的测量带宽。
+
+    KeyValue
+ (零次或多次。)
+
+      将来的格式版本可能包含附加的键值对
+      RelayLine。
+      附加的键值对将伴随着一个较小的版本增量。
+
+      实现可以根据需要添加额外的中继键值对。
+      应该更新该规范，以避免相同关键字的含义发生冲突。
+
+      解析器不能依赖于这些附加的键值对的顺序。
+
+      附加的键值对不能使用标头格式中指定的任何关键字。
+      如果存在，解析器可能会忽略冲突的关键字。
+
+2.4。实现细节
+
+2.4.1。原子地写入带宽文件
+
+  为了避免读取不一致，实现应该原子地写入带宽文件。如果该文件是从另一个主机传输的，则应该将其写入临时路径，然后将其重命名为V3BandwidthsFile路径。
+ sbws版本0.7.0和更高版本将带宽文件写入存档位置，创建到该位置的临时符号链接，然后自动将符号链接重命名为配置的V3BandwidthsFile路径。
+
+  Torflow不会自动写入带宽文件。
+
+2.4.2。附加的键值对定义
+
+  当前实现生成的中继线中的键值对。
+
+2.4.2.1。简单的带宽扫描仪
+ sbws中继线包含以下关键字:
+ “node_id = " hexdigest
+
+      如上所述。
+ “bw = "带宽
+
+      如上所述。
+ ”尼克= "的绰号
+ (一次。)
+
+      继电器的昵称。
+
+      Torflow还有一个“nick=”键值。
+ “rtt = " Int
+ (零次或一次。)
+
+      获取1字节数据的往返时间(以毫秒为单位)。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+      在该规范的1.3.0或1.4.0版本中，它变成了可选的。
+ “时间= " DateTime
+ (一次。)
+
+      获得最后一个带宽时，ISO 8601格式和UTC时区的日期和时间时间戳。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+      Torflow当量为“measured_at=”。
+ “成功= " Int
+ (零次或一次。)
+
+      此中继的带宽测量成功的次数。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+ “error_circ = " Int
+ (零次或一次。)
+
+      这个中继的带宽测量由于电路故障而失败的次数。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+      Torflow的等效函数是“circ_fail=”。
+ “error_stream = " Int
+ (零次或一次。)
+
+      此中继的带宽测量由于流故障而失败的次数。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+ “error_destination = " Int
+ (零次或一次。)
+
+      由于目标Web服务器不可用而导致此中继的带宽测量失败的次数。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “error_second_relay = " Int
+ (零次或一次。)
+
+      这个中继的带宽测量失败的次数，因为sbws无法找到测试电路的第二个中继。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “error_misc = " Int
+ (零次或一次。)
+
+      由于其他原因，此中继的带宽测量失败的次数。
+
+      这个KeyValue是在该规范的1.1.0版本中添加的。
+ “bw_mean = " Int
+ (零次或一次。)
+
+      此中继测量的平均带宽，单位为字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “bw_median = " Int
+ (零次或一次。)
+
+      这个中继的测量带宽中位数，单位是字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “desc_bw_avg = " Int
+ (零次或一次。)
+
+      描述符此中继的平均带宽，单位是字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “desc_bw_obs_last = " Int
+ (零次或一次。)
+
+      此中继观察到的最后一个描述符的带宽，单位是字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “desc_bw_obs_mean = " Int
+ (零次或一次。)
+
+      描述符观察到的此中继的平均带宽，单位是字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “desc_bw_bur = " Int
+ (零次或一次。)
+
+      描述符为这个中继突发带宽，单位为字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “consensus_bandwidth Int
+ (零次或一次。)
+
+      此中继的一致带宽，单位为字节/秒。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “consensus_bandwidth_is_unmeasured Bool”
+ (零次或一次。)
+
+      如果此中继的一致带宽不是从三个或更多带宽权限获得的，则此键值为True或
+      否则错误。
+
+      这个KeyValue是在该规范的1.2.0版本中添加的。
+ “relay_in_recent_consensus_count Int
+ (零次或一次。)
+
+      在最近的data_period天中，在一致性中找到此中继的次数。(除非另有说明，data_period为
+      默认5。)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_priority_list_count Int
+ (零次或一次。)
+
+      在最近的data_period天内测量此中继的优先级的次数。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurement_attempt_count Int
+ (零次或一次。)
+
+      在最近的data_period天内尝试测量此中继的次数。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurement_failure_count Int
+ (零次或一次。)
+
+      在最近的data_period天内尝试测量此中继的次数，但无法获得测量结果。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurements_excluded_error_count = " Int
+ (零次或一次。)
+
+      最近继电器测量尝试失败的次数。
+      如果度量值位于data_period的最后一天(默认为5)，则表示它们是最近的。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurements_excluded_near_count = " Int
+ (零次或一次。)
+
+      如果一个继电器最近所有成功的测量都在很短的时间内完成(默认为1天)，则该继电器被排除在外。此键值包含由于此原因而忽略的中继最近成功测量的次数。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurements_excluded_old_count = " Int
+ (零次或一次。)
+
+      这个中继太旧的成功测量次数(超过data_period天，默认为5)。
+
+      排除已经在relay_recent_measurements_excluded_near_count中计数的度量值。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “relay_recent_measurements_excluded_few_count = " Int
+ (零次或一次。)
+
+      由于中继没有进行足够的成功测量而忽略的该中继的成功测量次数(默认小于2次)。
+
+      排除已经在relay_recent_measurements_excluded_near_count或relay_recent_measurements_excluded_old_count中计数的测量值。
+ (参见第1.4节，版本1.4.0中关于排除继电器的说明。)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ bool“under_min_report =”
+ (零次或一次。)
+
+      如果值为1，则在带宽文件中没有足够的合格继电器，并且Tor带宽管理机构可能不会对该继电器投票。(当前的Tor版本没有根据“under_min_report”键改变它们的行为。)
+
+      如果值为0或键值不存在，则在带宽文件中有足够的继电器。
+
+      因为Tor版本发布于2019年4月之前(参见1.4节)。对于完整的版本列表)忽略“vote=0”，生成器实现
+      不能改变低报继电器的带宽。使用相同的bw值使得不理解“vote=0”或“under_min_report=1”的权威机构产生的选票不会过多地改变中继权重。当达到报告阈值时，它还可以避免抖动。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “无边无际的= "保龄球
+ (零次或一次。)
+
+      如果值为1，则该继电器测量不成功
+      Tor带宽管理机构不能对该中继进行投票。(当前的Tor版本不会根据“未测量”的密钥改变它们的行为。)
+
+      如果值为0或键值不存在，则此继电器被成功测量。
+
+      因为Tor版本发布于2019年4月之前(参见1.4节)。对于完整的版本列表)忽略“vote=0”，生成器实现
+      对于未测量的继电器必须设置“bw=1”。使用最小bw值使不理解“投票=0”或“未测量=1”的权威机构产生的选票不会过多地改变中继权重。
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+ “投票= "保龄球
+ (零次或一次。)
+
+      如果值为0,Tor目录权威机构应该忽略带宽文件中的中继条目。他们应该像为文件中不存在的中继投票一样为该中继投票。
+
+      这可能是中继没有成功测量的情况，但它包含在带宽文件中，以诊断为什么他们没有测量。
+
+      如果值为1或KeyValue不存在，那么Tor目录授权机构必须在该中继的任何投票中使用该中继的bw值。
+
+      实现还必须为未测继电器设置“bw=1”。
+      但他们不能改变bw低于min_report继电器。(详见“未计量”和“未计量报告”下的解释)
+
+      这个KeyValue是在本规范的1.4.0版本中添加的。
+
+2.4.2.2。Torflow
+
+  Torflow中继线包括node_id和bw，以及其他键值对[2]。
+
+引用:
+
+1. https://gitweb.torproject.org/torflow.git
+2. https://gitweb.torproject.org/torflow.git/tree/NetworkScanners/BwAuthority/README.spec.txt#n332
+   Torflow规范已经过时，并且与当前的实现不匹配。看到部分背书。用于由Torflow生成的格式。
+3.https://gitweb.torproject.org/torspec.git/tree/dir-spec.txt
+4. https://gitweb.torproject.org/torspec.git/tree/version-spec.txt
+5. https://semver.org/
+
+答:样本数据
+
+以下是没有从任何实际测量中得到的数据。
+
+. 1。由Torflow
+
+这是一个示例版本1.0.0文档:
+
+1523911758 node_id a483e05a2abdca6da5a3ef8db5177638a27f80 bw = 760 = 68美元尼克=测试measured_at = 1523911725 updated_at = 1523911725 pid_error = 4.11374090719 pid_error_sum = 4.11374090719 pid_bw = 1523911725 pid_delta = 2.12168374577 circ_fail = 0.2扫描仪= / filepath node_id c15995f30895689291f455587bd94ca427b6fc bw = 189 = 96美元尼克= Test2 measured_at = 1523911623 updated_at = 1523911623 pid_error = 3.96703337994 pid_error_sum = 3.96703337994 pid_bw = 1523911623 pid_delta = 2.65469736988 = / filepath circ_fail = 0.0扫描器
+
+由信用证。由sbws版本0.1.0生成
+
+1523911758 = 1.1.0版本软件=南偏西software_version = 0.1.0 latest_bandwidth = 2018 - 04 - 16 - t20:49:18 file_created = 2018 - 04 - 16 - t21:49:18 generator_started = 2018 - 04 - 16 - t15:13:25 earliest_bandwidth = 2018 - 04 - 16 - t15:13:26 = = = = bw = 380 error_circ = 0 error_misc = 0 error_stream = 1 master_key_ed25519 = YaqV4vbvPYKucElk297eVdNArDz9HtIwUoIeo0 + cVIpQ尼克a483e05a2abdca6da5a3ef8db5177638a27f80 rtt =测试node_id = 68美元= 380 = 1次成功= 2018 - 05 - 08 - t16:13:26 bw = 189 error_circ error_stream = 0 = 0 error_misc = 0master_key_ed25519=a6a+dZadrQBtfSbmQkP7j2ardCmLnm5NJ4ZzkvDxbo0I nick=Test2 node_id=$96C15995F30895689291F455587BD94CA427B6FC rtt=378 success=1 time=2018-05-08T16:13:36
+
+出具。由sbws版本1.0.3生成
+
+1523911758 version = 1.2.0 latest_bandwidth = 2018 - 04 - 16 - t20:49:18 file_created = 2018 - 04 - 16 - t21:49:18 generator_started = 2018 - 04 - 16 - t15:13:25 earliest_bandwidth = 2018 - 04 - 16 - t15:13:26 minimum_number_eligible_relays = 3862 minimum_percent_eligible_relays = 60 number_consensus_relays = 6436 number_eligible_relays = 6000 percent_eligible_relays = 93软件=南偏西software_version = 1.0.3 = = = = = bw = 38000 bw_mean = 1127824 bw_median = 1127824 desc_bw_avg = 1073741824 desc_bw_obs_last = 1073741824 desc_bw_obs_mean = 1073741824 error_circ = 0error_misc = 0 error_stream = 1 master_key_ed25519 = YaqV4vbvPYKucElk297eVdNArDz9HtIwUoIeo0 + cVIpQ尼克a483e05a2abdca6da5a3ef8db5177638a27f80 rtt =测试node_id = 68美元= 380 = 1次成功= 2018 - 05 - 08 - t16:13:26 bw bw_median = 1 bw_mean = 199162 = 185675 desc_bw_avg = 409600 desc_bw_obs_last = 836165 desc_bw_obs_mean = 858030 error_circ = 0 error_misc = 0 error_stream = 0 master_key_ed25519 = a6a + dZadrQBtfSbmQkP7j2ardCmLnm5NJ4ZzkvDxbo0I尼克= Test2 node_id =成功c15995f30895689291f455587bd94ca427b6fc rtt = 378 = 1 96美元时间= 2018 - 05 - 08 - t16:13:36
+
+A.3.1。当合格的测量继电器不够时:
+
+1540496079 version = 1.2.0 earliest_bandwidth = 2018 - 10 - 20 - t19:35:52 file_created = 2018 - 10 - 25 - t19:35:03 generator_started = 2018 - 10 - 25 - t11:42:56 latest_bandwidth = 2018 - 10 - 25 - t19:34:39 minimum_number_eligible_relays = 3862 minimum_percent_eligible_relays = 60 number_consensus_relays = 6436 number_eligible_relays = 2960 percent_eligible_relays = 46软件=南偏西software_version = 1.0.3 = = = = =
+
+各。由sbws版本1.0.4生成的头文件
+
+1523911758 version = 1.2.0 latest_bandwidth = 2018 - 04 - 16 - t20:49:18 destinations_countries = TH, ZZ file_created = 2018 - 04 - 16 - t21:49:18 generator_started = 2018 - 04 - 16 - t15:13:25 earliest_bandwidth = 2018 - 04 - 16 - t15:13:26 minimum_number_eligible_relays = 3862 minimum_percent_eligible_relays = 60 number_consensus_relays = 6436 number_eligible_relays = 6000 percent_eligible_relays = 93 scanner_country = SN软件=南偏西的1.0.4 software_version = = = = = =
+
+A.5由sbws版本1.1.0生成
+
+= 1523911758版本1.4.0 latest_bandwidth = 2018 - 04 - 16 - t20:49:18 destinations_countries = TH, ZZ file_created = 2018 - 04 - 16 - t21:49:18 generator_started = 2018 - 04 - 16 - t15:13:25 earliest_bandwidth = 2018 - 04 - 16 - t15:13:26 minimum_number_eligible_relays = 3862 minimum_percent_eligible_relays = 60 number_consensus_relays = 6436 number_eligible_relays = 6000 percent_eligible_relays = 93 recent_measurement_attempt_count = 6243 recent_measurement_failure_count = 732 recent_measurements_excluded_error_count = 969recent_measurements_excluded_few_count = 3946 recent_measurements_excluded_near_count = 90 recent_measurements_excluded_old_count = 0 recent_priority_list_count = 6243 scanner_country recent_priority_relay_count = = SN软件=南偏西software_version = 1.1.0 time_to_report_half_network = 57273 = = = = = bw = 1 error_circ = 1 error_destination = 0 error_misc = 0 error_second_relay = 0 error_stream = 0 master_key_ed25519尼克= snap269 node_id = = J3HQ24kOQWac3L1xlFLp7gY91qkb5NuKxjj1BhDi + m8 DC4D609F95A52614D1E69C752168AF1FCAE0B05F美元relay_recent_measurement_attempt_count = 3 relay_recent_measurements_excluded_error_count = 1 relay_recent_measurements_excluded_near_count = 3 relay_recent_consensus_count = 3 relay_recent_priority_list_count成功= 3 = 3 = 2019 - 03 - 16 t18:20:57无边无际的投票= 1 = 0 bw = 1 error_circ = 0 error_destination = 0 error_misc = 0 error_second_relay = 0 error_stream = 2 master_key_ed25519 = h6ZB1E1yBFWIMloUm9IWwjgaPXEpL5cUbuoQDgdSDKg尼克=继电器node_id = C4544F9E209A9A9B99591D548B3E2822236C0503美元relay_recent_measurement_attempt_count=3 relay_recent_measurements_excluded_error_count=2 relay_recent_measurements_excluded_few_count=1 relay_recent_priority_list_count=3 success=1 time= 2019-03-17t06:50 58 unmeasured=1 vote=0
+
+b .扩展带宽
+
+责任。扩展需求
+
+  Tor接受零带宽，但是它们会在旧的Tor实现中引发bug。因此，缩放方法应该执行以下检查:
+   *如果总带宽为零，则所有继电器应给予相等的带宽。
+   *如果缩放后的带宽为0，它应该四舍五入到1。
+
+  最初的实验表明，torflow和sbws可能不需要缩放，因为它们测量到的带宽已经足够相似了。
+
+B.2。线性尺度法
+
+  如果需要缩放，这里有一个简单的线性带缩放方法，确保所有带宽投票包含大致相同的总带宽:
+
+  1. 通过将测量的总带宽除以所有投票，再除以有测量带宽投票的继电器的数量来计算继电器配额。在公共tor网络中，大约是7500
+     2018年4月。配额应该是一个一致的参数，这样就可以对网络上的所有发电机进行调整。
+
+  2. 通过将中继配额乘以此带宽权威所测量的带宽宽度的中继数量来计算投票配额。
+
+  3.通过将投票配额除以该带宽授权机构即将进行的投票中未缩放的总测量带宽来计算比例因子。
+
+  4. 将每个未缩放的测量带宽乘以缩放因子。
+
+  现在，在即将到来的投票中缩放的总带宽近似等于配额。
+
+B.3。指标的变化
+
+  如果所有发电机都使用缩放，配额可以根据需要逐步减少或增加。较小的配额减少了未压缩共识的规模，可以减少共识差异和压缩共识的规模。但是如果继电器配额太小，一些继电器可能会过载或过轻。
+
+B.4。Torflow aggreation
+
+  Torflow实现了两种方法来计算从(流)带宽测量的带宽值:有PID控制反馈和没有PID控制反馈。
+  这里描述的方法是没有PID控制的(参见Torflow规范，第2.2节)。
+
+  在接下来的章节中，中继的测量带宽指的是这个带宽权威为即将被包括在下一次带宽权威投票中的中继测量的带宽。
+
+  1. 计算每个中继的滤波带宽:
+    -选择继电器的测量值(' bw_j ')，该值等于或大于该继电器测量值的平均值
+    -计算这些测量值的平均值
+
+    在伪代码:
+ = mean(max(mean(bw_j)， bw_j))
+
+  2. 计算网络平均:
+    -通过将所有继电器滤波带宽的总和除以已测量的继电器的数量(' n ')来计算滤波的平均值，也就是说，计算继电器滤波带宽的平均平均值。
+    -通过将所有继电器滤波带宽的总和除以已测量的继电器的数量(' n ')计算流平均值，即计算平均平均或继电器测量带宽。
+
+     在伪代码:
+ bw_avg_filt_ = bw_filt_i / n
+
+  3.计算每个继电器的比率:
+    -通过将每个中继滤波的带宽除以滤波的平均值计算滤波的比率
+    -通过将每个中继测量的带宽除以流的平均值来计算流比率
+
+    在伪代码:
+ r_strm_i = bw_i / bw_avg_strm r_strm_i = bw_i / bw_avg_strm
+
+  4. 计算每个继电器的终比:
+    最终的比率是滤过的带宽和流的带宽之间的较大。
+
+    在伪代码:
+ r_i = max(r_filt_i, r_strm_i)
+
+  5. 计算每个继电器的缩放带宽:
+    最近的描述符观察到的带宽(' bw_obs_i ')乘以这个比率
+
+    在伪代码:
+ bw_new_i = r_i * bw_obs_i
+ <<通过这种方式，产生的网络状态一致带宽值有效地按节点比网络的其他部分快多少的比例重新加权

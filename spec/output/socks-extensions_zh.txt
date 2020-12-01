@@ -1,0 +1,65 @@
+
+
+                 Tor对SOCKS协议的扩展
+
+1. 概述
+
+  SOCKS协议为TCP代理提供了一个通用接口。客户端软件通过TCP连接到SOCKS服务器，并请求到另一个地址和端口的TCP连接。SOCKS服务器建立连接，并向客户机报告成功或失败。在建立连接之后，客户端应用程序像往常一样使用TCP流。
+
+  Tor支持[1]中定义的SOCKS4，[2]中定义的SOCKS4A，以及
+  在[3]和[4]中定义的SOCKS5。
+
+  实际上，Tor在支持客户时最棘手的问题是强迫
+  在OR端进行DNS查找:如果客户端自己进行DNS查找，DNS服务器可以了解客户端想要到达的地址。
+  SOCKS4支持IPv4地址寻址;SOCKS4A是最上面的组装工
+  SOCKS4允许以主机名寻址;SOCKS5支持IPv4、IPv6和主机名。
+
+1.1。程度上的支持
+
+  Tor支持SOCKS4、SOCKS4A和SOCKS5标准，但以下情况除外:
+
+  两个:
+  -不支持BIND命令。
+
+  SOCKS4, 4:
+  - SOCKS4用户名用于实现流隔离。
+
+  SOCKS5:
+  ——(SOCKS5)不支持“UDP ASSOCIATE”命令。
+  -不支持SOCKS5绑定命令。
+  - IPv6不支持连接命令。
+  -不支持SOCKS5 GSSAPI子协商。
+  -支持“无需认证”(SOCKS5)认证方法[00];在Tor 0.2.3.2-alpha中，也支持“用户名/密码”(SOCKS5)身份验证方法[02]，并将其用作实现流隔离的方法。作为一个扩展，以支持一些坏客户，我们允许客户通过“用户名/密码”认证消息给我们，即使没有选择认证。此外，我们允许此消息的用户名/密码字段为空。这在技术上违背了RFC1929[4]，但确保了某种程度上破坏了互操作性
+    SOCKS5客户端实现。
+  -自定义回复错误代码。根据RFC[3]，“REP”字段有未分配的值，这些值用于描述Tor内部错误。看到
+    tor中的扩展错误。更多细节的手册页。只有设置了这个SocksPort标志，它才会被返回。
+ (有关流隔离的更多信息，请参见Tor手册中的IsolateSOCKSAuth。)
+
+2. 名称查询
+
+  作为对SOCKS4A和SOCKS5的扩展，Tor实现了一个新的命令值“RESOLVE”[F0]。当Tor接收到一个“RESOLVE”SOCKS命令时，它会对SOCKS请求中作为目标地址提供的主机名进行远程查找。应答要么是一个错误(如果无法解决地址)，要么是一个成功的响应。在成功的情况下，地址存储在SOCKS响应中为远程IP地址保留的部分。
+ (我们也支持在袜子上解决问题，尽管这是不必要的。)
+
+  仅对于SOCKS5，我们支持使用一个新的命令值“RESOLVE_PTR”[F1]进行反向解析。为了响应以IPv4地址为目标的“RESOLVE_PTR”SOCKS5命令，Tor尝试寻找IPv4记录的规范主机名，并在应答的“服务器绑定地址”部分返回它。(此命令在Tor 0.1.2.2-alpha之前不受支持。)
+
+3.其他命令扩展。
+
+  alpha增加了一个新的命令值:"CONNECT_DIR" [F2]。
+  在这种情况下，Tor将打开一个加密的直接TCP连接，连接到由address:port指定的Tor服务器的目录端口(指定的端口应该是服务器的ORPort)。它使用一个单跳隧道和一个“BEGIN_DIR”中继单元来完成这个安全连接。
+
+  F2命令值在Tor 0.2.0.10-alpha中被删除，取而代之的是在edge_connection_t中使用新的use_begindir标志。
+
+4. HTTP-resistance
+
+  Tor检查每个SOCKS请求的第一个字节，看它是否更像一个HTTP请求(也就是说，它以“G”、“H”或“P”开头)。如果是，Tor会返回一个小页面，告诉用户他/她的浏览器配置错误。这对于许多错误地尝试使用Tor作为HTTP代理而不是SOCKS代理的用户是有帮助的。
+
+5. 乐观的数据
+
+  Tor允许SOCKS客户端在Tor发送a之前发送连接数据
+  袜子的回应。当使用支持“乐观数据”的退出节点时，
+  Tor将发送这些数据到服务器，而不等待看连接尝试是否成功。当使用客户端首先发言的协议(如HTTP)启动连接时，此行为可以节省一次往返时间。这样做的客户端必须在发送数据后准备好接收连接成功或失败的消息。
+
+
+
+参考文献:[1]http://en.wikipedia.org/wiki/SOCKS#SOCKS4 [2] http://en.wikipedia.org/wiki/SOCKS#SOCKS4a [3] SOCKS5: RFC 1928 https://www.ietf.org/rfc/rfc1928.txt [4] RFC 1929: https://www.ietf.org/rfc/rfc/rfc1929.txt
+

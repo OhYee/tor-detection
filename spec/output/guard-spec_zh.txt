@@ -1,0 +1,512 @@
+
+
+                      Tor保护规范
+
+                           伊希斯Lovecruft
+                         乔治Kadianakis
+                              Ola Bini
+                           尼克·马修森
+
+1. 介绍和动机
+
+  Tor使用入口守卫来防止攻击者通过观察每个用户流量的一部分来控制网络的一部分。如果用户每次构建电路时都从服务器列表中随机选择进入和退出，那么拥有(k/N)网络的对手就会去匿名化
+  所有电路的F=(k/N)^2…在给定的用户建立了C电路后，攻击者至少会看到它们一次，概率为1-(1- f)^C。对于较大的C，攻击者将以1的概率获得每个用户流量的样本。
+
+  为了防止这种情况发生，Tor客户端选择了少量的保护节点(例如3)，这些保护节点是客户端将直接连接的唯一节点。如果它们没有被破坏，用户的路径也不会被破坏。
+
+  该规范概述了Tor的guard内务整理算法，该算法试图满足以下目标:
+
+    -决定如何选择和选择哪些保护的启发式和算法应该尽可能保持简单和易于理解。
+
+    -在审查区域或在法西斯防火墙后连接到Tor网络的客户在可达性或可用性方面不会有任何明显的劣势。
+
+    Tor应该尽最大努力去发现最合适的行为，用户输入和配置越少越好。
+
+    - Tor客户端应该发现可用的保护没有太多的延迟。
+
+    - Tor客户端应该抵抗(尽可能多的)攻击，试图迫使他们到折衷的保护。
+
+    -应保持路径选择算法所提供的负载均衡
+
+2. 状态的实例
+
+   在下面的算法中，我们描述了一组持久和非持久状态变量。这些变量应该被视为一个对象，其中可以存在多个实例。
+
+   特别地，我们指定了三个特定实例的使用:
+
+     答:UseBridges
+
+      如果设置了UseBridges，那么我们将下面的[Sec:GUARDS]中的{guard}设置替换为配置的桥的列表。我们维护了一个单独的持久实例{SAMPLED_GUARDS}和{CONFIRMED_GUARDS}，以及UseBridges情况下的其他派生值。
+
+      在这种情况下，我们对样本容量没有上限。
+
+    B. EntryNodes / excludenode /可到达* address /
+        FascistFirewall / ClientUseIPv4 = 0
+
+      如果设置了上面的一个选项，而UseBridges没有设置，那么我们将比较一致意见中可用保护的比例与一致意见中保护的总数。
+
+      如果这个分数小于{有意义_restriction_frac}，我们使用该状态的一个单独的实例。
+ (当Tor运行时，我们不会在状态的单独实例和默认实例之间来回更改，除非可用保护的比例高于或低于{意义ful_restriction_frac} 5%。这可以防止我们在实例之间来回切换，如果我们恰好命中了{有意义_restriction_frac}。
+
+      如果这个分数小于{EXTREME_RESTRICTION_FRAC}，我们会使用一个单独的状态实例，并警告用户。
+ [TODO:我们是否应该为每一组严格限制的选项设置一个不同的实例?]
+
+   c .违约
+
+      如果以上两个变量状态实例都未使用，则使用默认实例。
+
+3.电路创建，入口警卫选择(1000英尺视图)
+
+   Tor中的电路是连接客户端到其目的地的网络路径。在高层，一个三跳出口电路看起来是这样的:
+
+   客户端<->入口警卫<->中间节点<->出口节点<->目的地
+
+   入口守卫是客户端将直接连接的唯一节点。退出继电器是流量退出的节点
+   Tor网络，以连接到一个外部目的地。
+
+   3.1路径选择
+
+   对于任何多跳电路，至少需要一个入口警卫和中间节点。如果流量将退出Tor网络，则需要一个退出节点。根据其配置，一致意见中列出的中继可以用于这些角色中的任何一个。但是，与中间节点或出口节点相比，该规范明确地定义了应该如何选择和管理入口守卫。
+
+   3.1.1管理门卫
+
+   在高水平上，共识中列出的继电器在从最初选择到最终作为入口警卫使用的过程中会经过以下状态:
+ 继电器一致列出|采样| |确认滤波| | |初级可用滤波
+
+   在最新共识中列出的继电器，如果它们有“保护”标志，可以取样用于保护使用。采样是随机的，但加权的是测量的带宽乘以带宽权重(Wgg，如果只有保护，
+   Wgd if保护+退出标记)。
+
+   一旦建立了一个路径和电路使用这个保护，它被标记为确认。在此之前，首先对保护进行采样，然后根据当前配置(参见采样和过滤部分)等信息过滤，如果保护不是主要的，但可以到达，则稍后将其标记为usable_filtered。
+
+   在构建新电路时，最好使用主保护，以减少保护搅动;只有在未能连接到现有的主防护时，才会使用新的防护。
+
+   3.1.2中间节点和退出节点选择
+
+   中间节点从最新共识中列出的中继中随机选择，并通过带宽和带宽权重进行加权。退出节点的选择类似，但限制为具有充分许可退出策略的中继。
+
+   3.2电路构建
+
+   一旦选择了一条路径，Tor就会使用这条路径构建新的电路。
+
+   如果电路成功构建，Tor要么立即使用它，要么等待一个具有更好保护的电路，如果有机会的话。
+
+   如果电路的故障使我们得出保护不可到达的结论，那么保护被标记为不可到达，电路被关闭，等待的电路被更新。
+
+4. 这个算法。
+
+4.0。在当前的共识中列出了守卫。(部分:保安)
+
+   通过{set: guard}，我们指的是当前共识中可用于所有电路和目录请求的所有保护的集合。(它们必须有标志:稳定、快速、V2Dir、Guard。)
+
+      * * * *
+
+   我们要求所有的守卫都有我们可能需要的任何守卫的标志，这样所有的守卫都可以用于所有的电路。
+
+4.1。被采样的保护集。[Section: sampling]
+
+   我们维护一个集合{set: sampled_guard}，该集合在Tor调用之间持久存在。它是一个示例idx排序的节点的子集，在某些情况下，该示例idx被列为共识中的保护。
+   对于每一个这样的守卫，我们都坚持记录:
+
+      - {pvar:ADDED_ON_DATE}:添加到sampled_guard的日期。
+
+        我们将该值设置为过去的一点，使用
+        兰德(现在,{GUARD_LIFETIME} / 10)。看到
+        下面的附件(随机)。
+
+      - {pvar:ADDED_BY_VERSION}:将其添加到sampled_guard的Tor版本。
+
+      - {pvar:IS_LISTED}:在我们最近看到的共识中，它是否被列为一个可用的保护。
+
+      - {pvar:FIRST_UNLISTED_AT}:如果IS_LISTED为false，则表示列出该保护的最早一致意见的发布日期，这样我们就不会在以后的一致意见中看到它的出现。否则“没有。”
+        我们将其随机化到过去的一个点
+          RAND(added_at_time， {REMOVE_UNLISTED_GUARDS_AFTER} / 5)
+
+   对于{sampled_guard}中的每个守卫，我们也非持久地记录这些数据:
+
+      - {tvar:last_tried_connect}:最后一次尝试连接的时间。默认的“永远”。
+
+      - {tvar: is_accessible}:一个“是可到达的”三态，可能的值{<state:yes>， <state:no>， <state:maybe>}。
+        默认“< >。”
+ [注:“是”并不是绝对必要的，但我还是要把它和“可能”区分开来，以使我们的逻辑更清晰。如果值得一试，警卫“可能”可以找到。如果我们尝试并成功的话，可以获得一个守卫。
+
+      - {tvar:failing_since}:第一次连接到该保护失败时。默认为“从不”。当我们成功连接到这个保护时，重置为“never”。
+
+      - {tvar:is_pending}一个“pending”标志。这表明我们正试图通过守卫建立一个探索回路，但我们不知道是否会成功。
+
+   我们要求{SAMPLED_GUARDS}至少包含来自一致意见的{MIN_FILTERED_SAMPLE}警卫(如果可能)，但不能超过一致意见中的警卫数量的{MAX_SAMPLE_THRESHOLD}，而且总数不能超过{MAX_SAMPLE_SIZE}。(但是如果最大值小于{MIN_FILTERED_SAMPLE}，我们将最大值设置为{MIN_FILTERED_SAMPLE}。)
+
+   要向{sampled_guard}添加一个新的guard，请根据路径选择规则从({guard} - {sampled_guard})中随机选择一个条目。
+
+   我们从{sampled_guard}中删除一个条目:
+
+      *我们有一个活共识，{is_lists}是假的，{FIRST_UNLISTED_AT}是在{REMOVE_UNLISTED_GUARDS_AFTER}天在过去。
+
+     或
+
+      *我们有一个live consensus，并且{ADDED_ON_DATE}是超过{GUARD_LIFETIME} ago， *和* {CONFIRMED_ON_DATE}是“从不”，或超过{GUARD_CONFIRMED_MIN_LIFETIME} ago。
+
+   注意，{sampled_guard}不依赖于我们的配置。
+   很有可能，我们实际上无法与这些守卫联系上。
+
+     * * * *
+
+   {SAMPLED_GUARDS}集用于限制客户端在给定时间段内连接到的警卫总数。它的大小上限防止我们考虑太多的保护。
+
+   第一个过期机制是为了使{sampled_guard}列表不会积累太多的死保护，从而使我们无法添加新的。
+
+   第二种过期机制使我们随着时间慢慢地旋转我们的防护装置。
+
+   将{sampled_guard}集按照采样这些警卫的顺序排序，并根据这个顺序从该集合中选择警卫，这样可以提高负载平衡。它更接近于根据路径选择规则提供保护节点的预期用法。
+
+   这个顺序还改进了这个建议的另一个目标:试图阻止对手将客户端推过折衷的警卫，因为对手在有机会使用新部署的对手节点之前，需要客户端耗尽所有的初始{sampled_guard}集。
+
+
+4.2。可用样品[部分:过滤]
+
+   我们维护另一个不持久的集合{set:FILTERED_GUARDS}。它是由:
+
+       ——{SAMPLED_GUARDS}
+       -我们现在的构型，
+       -路径偏差信息。
+
+   约束是{set: filtered_guard}的成员，当且仅当以下条件都为真:
+
+       -它是{sampled_guard}的成员，{is_listing}设置为true。
+       -它不是由于路径偏差问题而禁用的。
+       -由于reachableaddress策略、clientuseip4设置、ClientUseIPv6设置、FascistFirewall设置或其他阻止使用某些地址的选项，它没有被禁用。
+       -它没有被禁用，因为排外。
+       -它是一座桥，如果使用桥是真的;如果UseBridges是假的，那么它就不是桥。
+       -如果设置了EntryNodes，则包含在EntryNodes中
+         UseBridges不是。(但见2。B)。
+
+   我们有一个额外的子集，{set:USABLE_FILTERED_GUARDS}，它被定义为{FILTERED_GUARDS}的子集，其中{is_可达}是<yes>或<maybe>。
+
+   我们尝试维护一个需求，即{USABLE_FILTERED_GUARDS}至少包含{MIN_FILTERED_SAMPLE}元素:
+
+     当我们要从{USABLE_FILTERED_GUARDS}中采样时，如果它包含的元素少于{MIN_FILTERED_SAMPLE}，我们就会向{sampled_guard}中添加新元素，直到其中一个为真:
+
+       * {usable_filtered_guard}足够大，
+     或
+       * {sampled_guard}处于最大大小。
+
+
+     * * * *
+
+  这些过滤器是在抽样之后应用的:如果我们在抽样之前应用它们，那么我们的抽样就会反映出我们在过去有过的一组过滤限制。
+
+4.3。confirmed-guard列表。(部分:确认)
+ (以前USED_GUARDS)
+
+  我们维护一个持久的有序列表，{list:CONFIRMED_GUARDS}。
+  它包含我们以前使用过的保护，按使用它们的优先顺序排列。它是{sampled_guard}的子集。对于这个列表中的每个守卫，我们持久化存储:
+
+      - {pvar:IDENTITY}它的指纹。
+
+      - {pvar:CONFIRMED_ON_DATE}，当我们添加这个守卫到{confirmed_guard}。
+
+        随机化到过去的一个点，如RAND(现在，{GUARD_LIFETIME}/10)。
+
+  当我们将通过guard构建的电路标记为“for user traffic”时，我们向{confirmed_guard}添加新成员。
+
+  当我们从{SAMPLED_GUARDS}中删除一个成员时，我们也从{CONFIRMED_GUARDS}中删除它。
+ [注意:您也可以将{confirmed_guard}列表看作是在{sampled_guard}的一个子集上定义的一个总的排序。]
+
+  定义:如果A和B都是可达的，我们宁愿使用A，我们称守卫为比另一个守卫B“优先级更高”的守卫。
+
+     *每个在{confirmed_guard}中的守卫都比不在{confirmed_guard}中的守卫有更高的优先级。
+
+     *在{CONFIRMED_GUARDS}中的警卫中，前面出现在{CONFIRMED_GUARDS}列表中的那个具有更高的优先级。
+
+     *在{CONFIRMED_GUARDS}中没有出现的守卫中，{is_pending}==真正的守卫具有更高的优先级。
+
+     *其中{last_tried_connect}时间较早的防护具有更高的优先级。
+
+     *最后，在{is_pending==false}没有出现在{CONFIRMED_GUARDS}中的保护中，所有的保护具有相同的优先级。
+
+   * * * *
+
+  当我们实际使用元件来构建一个可用的电路时，我们在这个顺序上加上元件。我们可以在其他时间标记它们(比如当我们尝试连接到它们时，或者当我们实际连接到它们时)，但是这种方法使我们在对敏感流量实际使用它之前不会提交给警卫。
+
+4.4。初级警卫[部门:初级]
+
+  我们保持一个运行时非持久有序列表{list:PRIMARY_GUARDS}。它是{FILTERED_GUARDS}的一个子集。它包含{N_PRIMARY_GUARDS}元素。
+
+  要计算主警卫，取{CONFIRMED_GUARDS}和{FILTERED_GUARDS}的有序交集，并取第一个{N_PRIMARY_GUARDS}元素。如果少于{N_PRIMARY_GUARDS}元素，则将额外的元素附加到
+  PRIMARY_GUARDS从({FILTERED_GUARDS} - {CONFIRMED_GUARDS})按示例顺序选择。
+
+  一旦一个元素被添加到{PRIMARY_GUARDS}中，我们不会删除它，直到它被{CONFIRMED_GUARDS}中的某个元素替换。
+
+  注意，{PRIMARY_GUARDS}不必在{USABLE_FILTERED_GUARDS}中:它们可能是不可访问的。
+
+    * * * *
+
+  这些警卫的待遇与其他警卫不同。如果其中一个是可用的，我们就马上使用它。对于其他警卫{FILTERED_GUARDS}，如果它是可用的，那么在使用它之前，我们可能首先要仔细检查是否有一个主警卫是可用的。
+
+4.5。重试警卫。(部分:重试)
+ (我们根据需要经常运行这个过程。它可以一秒钟完成一次，也可以准时完成。)
+
+  如果一个主要被采样的守卫的{is_可达}状态是<no>，那么我们决定是否根据它的{last_tried_connect}时间、它的{failing_since}时间和{PRIMARY_GUARDS_RETRY_SCHED}时间表将它的{is_可达}状态更新为<maybe>。
+
+  如果一个非主要的被采样警卫的{is_可达}状态是<no>，那么我们决定是否根据它的{last_tried_connect}时间、它的{failing_since}时间和{GUARDS_RETRY_SCHED}时间表将它的{is_可达}状态更新为<maybe>。
+
+    * * * *
+
+  观察到的一个警卫“不可到达”的时间只会持续一定的时间，因为我们不能从几分钟前不可到达的事实来推断它现在不可到达。
+
+4.6。选择电路保护。(部分:选择)
+
+  每个原点电路现在都处于这些状态中的一种
+ <state:usable_on_completion>， <state:usable_if_no_better_guard>， <state:waiting_for_better_guard>，或<state:complete>。
+
+  只能将流附加到<完整>电路。(另外，在<complete>电路上只能发送交会单元、ESTABLISH_INTRO单元和引入单元。)
+
+  每电路状态机为:
+
+      新电路为<usable_on_completion>或<usable_if_no_better_guard>。
+
+      一个<usable_on_completion>电路可能变成<complete>，或者可能失败。
+
+      一个<usable_if_no_better_guard>电路可以变成<usable_on_completion>;可能成为< waiting_for_better_guard >;也可能失败。
+
+      一个<waiting_for_better_guard>电路将变成<complete>，或将被关闭，或将失败。
+
+      一个<complete>电路保持<complete>，直到它失败或被关闭。
+
+      下面将描述其中的每个转换。
+
+  我们保持，为全局暂态:
+
+    * {tvar:last_time_on_internet}——我们最后一次成功地使用电路或连接到守卫上。在启动时，我们将其设置为“无限遥远的过去”。
+
+  当我们想要建立一个电路，我们需要挑选一个后卫:
+
+    *如果PRIMARY_GUARDS中的任何一个条目的{is_可及}状态为<maybe>或<yes>，返回第一个{NUM_USABLE_PRIMARY_DIRECTORY_GUARDS}这样的警卫，随机选择。电路为<usable_on_completion>。
+ [注:我们在主保护上不使用{is_pending}，因为我们愿意在确定它们是否工作之前尝试通过它们构建多个电路，而且因为我们不会使用任何非主保护，直到我们确定主保护全部关闭。(XX这个好吗?)
+
+    *否则，如果{CONFIRMED_GUARDS}和{USABLE_FILTERED_GUARDS}的有序交集非空，则返回该交集中{is_pending}设置为假的第一个条目。将其值{is_pending}设置为true。电路现在是<usable_if_no_better_guard>。(如果所有条目{is_pending}为真，则选择第一个。)
+
+    *否则，如果没有这样的条目，按示例顺序从{usable_filtered_guard}中选择一个成员。将其{is_pending}字段设置为true。电路为<usable_if_no_better_guard>。
+
+    *否则，如果USABLE_FILTERED_GUARDS为空，则已耗尽所有采样的警卫。在这种情况下，我们继续将所有警卫标记为<也许>可达，以便我们可以继续尝试电路。
+
+  每当我们为一个新的电路尝试选择一个保护时，我们将保护的{last_tried_connect}时间更新为‘now’。
+
+  在某些情况下(例如，当我们需要某个目录特性时，或者当我们需要避免使用某个出口作为保护时)，我们需要限制对单个电路使用的保护。当这种情况发生时，我们就会记住为该电路选择保护时所应用的限制，因为我们稍后将需要它们(参见[UPDATE_WAITING])。
+
+    * * * *
+
+  这是算法的核心。我们的主要目标是确保这一点
+
+    1. 如果有可能的话，我们会用主警卫。
+    2. 我们可能会用第一个主警卫。
+
+  所以我们只会在确信所有的主守卫都倒下的情况下才会尝试非主守卫，而且我们只会在早期的主守卫倒下的情况下尝试一个给定的主守卫。
+
+  然而，当我们尝试非主守卫时，我们只通过每个守卫建立了一个电路，给它一个成功或失败的机会。如果这样的电路成功了，我们不会使用它，直到我们非常确定它是我们所得到的最好的保护。(见下文)。
+ (XXX超时。)
+
+4.7。当电路故障时。(部分:ON_FAIL)
+
+   当电路发生故障，使我们得出保护不可达到的结论时，我们采取以下步骤:
+
+      *将守卫的{is_accessible}状态设置为<no>。如果它将{is_pending}设置为true，我们将其设置为非挂起。
+
+      当然是闭合电路。(这样[UPDATE_WAITING]中的算法就不会考虑它了。)
+
+      *更新等待电路列表。(见下面的[UPDATE_WAITING]。)
+ [注:现有的Tor逻辑将导致我们创建更多的电路来响应这些步骤;也见[ON_CONSENSUS]。
+
+    * * * *
+
+   参见上面的[选择]了解基本原理。
+
+4.8。当电路成功时[Section:ON_SUCCESS]
+
+   当电路成功，使我们断定保护是可及的，我们采取以下步骤:
+
+      *我们将其{is_accessible}状态设置为<yes>。
+      *我们将其{failing_since}设置为“never”。
+      *如果守卫是{is_pending}，则清除{is_pending}标志。
+      *如果守卫不是{confirmed_guard}的成员，我们将它添加到{confirmed_guard}的末尾。
+
+      *如果这个电路是<usable_on_completion>，这个电路现在是<complete>。您可以将流附加到此电路，并将其用于隐藏服务。
+
+      *如果这个电路是<usable_if_no_better_guard>，它现在是<waiting_for_better_guard>。您可能还没有将流附加到它。
+        然后检查是否{last_time_on_internet}大于{INTERNET_LIKELY_DOWN_INTERVAL}秒前:
+
+           *如果是，那么将所有{PRIMARY_GUARDS}标记为“可能”可达。
+
+           *如果不是，更新等待电路列表。(参见下面的[UPDATE_WAITING])
+ [注:现有的Tor逻辑将导致我们创建更多的电路来响应这些步骤;看看[ON_CONSENSUS]。)
+
+    * * * *
+
+   参见上面的[选择]了解基本原理。
+
+4.9。更新等待电路列表[Section:UPDATE_WAITING]
+
+   当<waiting_for_better_guard>电路可能准备好被称为<complete>时，我们就运行这个过程。
+
+   *任意电路C1 <waiting_for_better_guard>，且:
+       *所有主警卫的可到达状态为<no>。
+       *没有电路C2“阻塞”C1。
+     然后，将C1升级到<complete>。
+
+   定义:在上述算法中，如果:
+       * C2满足c的所有约束条件
+       * C2优先级高于C1，且
+       * C2是<complete>，或C2是<waiting_for_better_guard>，或C2已经<usable_if_no_better_guard>不超过{NONPRIMARY_GUARD_CONNECT_TIMEOUT}秒。
+
+   我们定期运行此程序:
+
+   *如果任何电路停留在<waiting_for_better_guard>超过{NONPRIMARY_GUARD_IDLE_TIMEOUT}秒，计时它。
+
+      * * * *
+
+   如果我们打开一个与防护器的连接，我们可能想要立即使用它(如果我们确定这是我们能做的最好的)，或者我们可能想要等待一段时间，看看是否其他一些我们更喜欢的电路将完成。
+
+
+   当我们标记一个电路<complete>时，我们不会立即关闭低优先级的电路:如果<complete>电路在{NONPRIMARY_GUARD_IDLE_TIMEOUT}秒之前关闭，我们可能会决定使用它们。
+
+4.10。每当我们达成新的共识。(部分:ON_CONSENSUS)
+
+   我们更新{警卫}。
+
+   对于{sampled_guard}中的每个守卫，我们更新{is_listing}和{FIRST_UNLISTED_AT}。
+ [**]如果合适，我们将根据样本警卫过期规则从{SAMPLED_GUARDS}中删除条目。如果它们在{CONFIRMED_GUARDS}中，我们也将它们从{CONFIRMED_GUARDS}中移除。
+
+   我们重新计算{FILTERED_GUARDS}以及从它派生的所有内容，包括{USABLE_FILTERED_GUARDS}和{PRIMARY_GUARDS}。
+ (每当影响过滤器的一个配置选项被更新时，我们就从[**]行开始重复上面的过程。)
+
+4.11。决定是否生成新电路。(部分:NEW_CIRCUIT_NEEDED)
+
+   当我们没有足够的已构建或正在构建的电路来处理给定的流或预期的流时，我们就生成一个新电路。
+
+   出于这个规则的目的，我们说<waiting_for_better_guard>电路既不构建也不进行;构建<完整>电路;其他州都在进行中。
+
+4.12。当我们缺少描述符的时候。(部分:MISSING_DESCRIPTORS)
+
+   我们需要一个路由器描述符或一个微描述符来通过保护建立电路。如果我们没有这样的描述符用于保护，我们仍然可以对单跳目录取操作使用保护，但不能用于较长的电路。
+ (同样，当我们缺少第一个{NUM_USABLE_PRIMARY_GUARDS}主保护的描述符时，我们在获取它们之前根本不构建电路。)
+
+答:附录
+
+格。确认
+
+  这项研究部分得到了美国国家科学基金会拨款CNS-1111539的支持，
+  CNS-1314637, CNS-1526306, CNS-1619454和CNS-1640548。
+
+. 1。带有建议值的参数。(部分:PARAM_VALS)
+ (所有建议值都是任意选择的)
+ {参数:MAX_SAMPLE_THRESHOLD}——20%
+ {参数:MAX_SAMPLE_SIZE} - 60
+ {param:GUARD_LIFETIME}——120天
+ {param:REMOVE_UNLISTED_GUARDS_AFTER}—20天[previous ENTRY_GUARD_REMOVE_AFTER]
+ {参数:MIN_FILTERED_SAMPLE} - 20
+ {参数:N_PRIMARY_GUARDS} - 3所示
+ {参数:PRIMARY_GUARDS_RETRY_SCHED}
+      ——前6个小时每30分钟一次。
+      ——在接下来的3.75天里，每2小时一次。
+      ——未来三天每4小时一次。
+      ——之后每9小时一次。
+ {param:GUARDS_RETRY_SCHED}——1小时
+      ——前6小时每小时一次。
+      ——在接下来的3.75天里，每4小时一次。
+      ——以后3天每18个小时一次。
+      ——此后每36小时一次。
+ {param:INTERNET_LIKELY_DOWN_INTERVAL}——10分钟
+ {param:NONPRIMARY_GUARD_CONNECT_TIMEOUT}——15秒
+ {param:NONPRIMARY_GUARD_IDLE_TIMEOUT}——10分钟
+ {参数:MEANINGFUL_RESTRICTION_FRAC}——。2
+ {参数:EXTREME_RESTRICTION_FRAC} . 01
+ {param:GUARD_CONFIRMED_MIN_LIFETIME}——60天
+ {参数:NUM_USABLE_PRIMARY_GUARDS} - 1
+ {参数:NUM_USABLE_PRIMARY_DIRECTORY_GUARDS} - 3所示
+
+由信用证。随机值(部分:随机)
+
+   通常，我们希望随机化某个东西的过期时间，这样观察者就不容易将它与它的开始时间匹配。我们通过稍微随机它的开始日期来做到这一点，因此我们只需要记住一个固定的到期时间间隔。
+
+   RAND(现在，间隔)指的是现在和过去间隔之间的时间，均匀随机选择。
+
+
+出具。为什么不按比例来做呢?(部分:本量利)
+
+   在一次会议上，我提出了一个想法，即“主值”应该是一个连续变量，而不是一个布尔值。
+
+   我不再确定这是一个好主意，但我将尝试概述它可能如何工作。
+
+   首先，“主要”给了它几个不同的特征:
+
+      1)我们更频繁地重试初级警卫。(部分:重试)
+
+      2)我们甚至不会尝试通过低优先级的保护装置来建造电路，直到我们非常确定高优先级的主保护装置失效。(另一方面，对于非主要防护器，我们启动探测电路，如果高优先级防护器成功，我们计划不使用这些电路。)
+
+      3)如果网络瘫痪一段时间后电路成功，我们会再试一次。(部分:ON_SUCCESS)
+
+   我们可以使上面的每一个特征都是连续的:
+
+      1)我们可以使守卫重试的间隔持续依赖于它在CONFIRMED_GUARDS中的位置。
+
+      2)我们可以根据在CONFIRMED_GUARDS中的位置来改变并行测试的警卫的数量。
+
+      3)在调用<usable_if_no_better_guard>电路<complete>之前，我们可以根据可能的网络宕机条件改变高优先级警卫需要宕机多长时间的规则。例如，我们可以重试第一个警卫如果我们尝试它超过10秒前，第二个如果我们尝试它超过20秒前，等等。
+
+   但是，我很确定，如果这些值得做，它们需要更多的分析!原因如下:
+
+      *他们都有可能泄露更多关于后卫在名单上的确切位置的信息。是安全的吗?有什么办法可以利用它吗?我想我们还不知道。
+
+      在我们实现了上述算法的更简单版本之后，这些修改看起来都是相对简单的。
+
+出具。控制器的变化
+
+   我们将在control-spec.txt中添加一个新的可能的电路状态GUARD_WAIT，它可以作为电路事件和关于电路的GETINFO响应的一部分给出。电路在完全构建时处于GUARD_WAIT状态，但我们不会使用它，因为具有更好保护的电路可能也会构建。
+
+各。持久状态的格式
+
+   持久状态格式不需要成为此规范的一部分，因为不同的实现可以以不同的方式实现。尽管如此，以下是Tor的用法:
+
+   “state”文件包含了一个守卫条目，对应于守卫状态的每个实例中的每个采样的守卫条目(参见第2节)。这个守卫条目的值是一组以空格分隔的K=V条目，其中K包含除=之外的任何非空格字符，V包含任何非空格字符。
+
+   实现在重新生成状态文件时，必须保留采样保护的任何无法识别的K=V项。
+
+   K=V项的顺序不允许有影响。
+
+   可以识别的字段(K的值)为:
+ “in”——此被采样的保护所在的保护状态实例的名称。如果一个被采样的警卫在两个警卫状态实例中，它会出现两次，每次都有一个不同的“in”字段。必需的。
+ “rsa_id”——这个保护的RSA id摘要，用十六进制编码。必需的。
+ “bridge_addr”——如果守卫是桥接，则其配置的地址和端口(可以是ORPort或可插入的传输端口)。可选的。
+ “绰号”——那名警卫的绰号，如果有的话。可选的。
+ “sampled_on”——警卫被取样的日期。必需的。
+ “sampled_by”——对该保护进行采样的Tor版本。
+        可选的。
+ “unlisted_since”——自警卫未被列入名单之日起。可选的。
+ “列出”——如果守卫没有列出，则为0;1如果是的话。必需的。
+ “confirmed_on”——守卫被确认的日期。可选的。
+ “confirmed_idx”——守卫在确认名单中的位置。可选的。
+ “pb_use_attempts”、“pb_use_success”、“pb_circ_attempts”、“pb_circ_success”、“pb_successful_circuit _closed”、“pb_collapsed_circuits”、“pb_unusable_circuits”、“pb_timeouts”——电路路径偏差算法的状态，以小数形式给出。可选的。
+
+   这里的所有日期都以UTC格式的ISO8601(无空格)日期和时间的组合形式给出(例如:2016-11-29T19:39:31)。
+
+
+待办事项。仍未解决的问题[章节:TODO]
+
+   模拟回答:这在一个反乌托邦的世界里能行得通吗?
+
+   模拟实际行为。
+
+   对于所有生存期:不是存储“这开始于”时间，而是存储“删除于”时间，稍微随机化。
+
+   澄清当你得到一个<完整的>电路时，你可能需要立即通过相同的保护重新启动电路，如果它们必须是独立的。
+
+
+   修复所有标记为XX或TODO的项目。
+ “目录守卫”——它们重要吗?
+
+       建议:要求所有的保安支持通过BEGINDIR下载。
+       我们不需要担心中继的目录保护，因为我们没有试图阻止中继枚举。
+
+   IP版本偏好通过ClientPreferIPv6ORPort
+
+       建议:在添加到{CONFIRMED_GUARDS}时，将其作为首选项对待，但不要将其作为其他选项。
+
