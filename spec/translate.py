@@ -15,7 +15,7 @@ APP_SECRET = ""
 with open(".secret") as f:
     APP_KEY, APP_SECRET = f.read().split("\n")
 
-print(APP_KEY,APP_SECRET)
+
 class Thread(threading.Thread):
     def __init__(self, thread_id, task_handle, task_pool):
         threading.Thread.__init__(self)
@@ -164,10 +164,10 @@ def dofile(name: str):
         f.write("\n".join(result))
 
 
-# if __name__ == "__main__":
-    # if not os.path.exists("output"):
-    #     os.mkdir("output")
-    # for root, dirs, files in os.walk("./torspec", topdown=False):
-    #     for name in files:
-    #         if (root == "./torspec" and name.split(".")[-1] == "txt"):
-    #             dofile(name)
+if __name__ == "__main__":
+    if not os.path.exists("output"):
+        os.mkdir("output")
+    for root, dirs, files in os.walk("./torspec", topdown=False):
+        for name in files:
+            if (root == "./torspec" and name.split(".")[-1] == "txt"):
+                dofile(name)
